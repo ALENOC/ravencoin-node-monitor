@@ -42,6 +42,7 @@ METRICS = (
     "disk_free_gb",
     "temperature_c",
     "health_score",
+    "price_rvn_usdt",
 )
 
 RANGE_SECONDS = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800, "30d": 2592000}

@@ -176,6 +176,23 @@
   }
   :root[data-theme="dark"] .card:hover { box-shadow: 0 2px 4px rgba(0,0,0,0.35), 0 10px 28px rgba(0,0,0,0.4); }
   .card.span-2 { grid-column: span 2; }
+  .card.span-full { grid-column: 1 / -1; }
+  .two-col-section {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .two-col-section .col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+  }
+  @media (max-width: 640px) {
+    .two-col-section { grid-template-columns: 1fr; }
+  }
   @media (max-width: 640px) {
     .grid { grid-template-columns: 1fr; }
     .card.span-2 { grid-column: span 1; }
@@ -333,9 +350,10 @@
   .health-components {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
-    gap: 12px 22px;
+    gap: 14px 22px;
     flex: 1;
     min-width: 240px;
+    align-self: center;
   }
   .health-component-row {
     display: flex;
@@ -344,14 +362,14 @@
     min-width: 0;
   }
   .health-component-row .k {
-    font-size: 10.5px;
+    font-size: 11.5px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
     white-space: nowrap;
   }
   .health-component-row .v {
-    font-size: 13.5px;
+    font-size: 15px;
     font-weight: 600;
     line-height: 1.3;
   }
@@ -542,9 +560,9 @@
       <div class="chart-toolbar">
         <select id="chart-metric">
           <option value="block_height">Block height</option>
-          <option value="peer_count" selected>Peer count</option>
+          <option value="peer_count">Peer count</option>
           <option value="mempool_tx_count">Mempool transactions</option>
-          <option value="network_hashrate">Network hashrate</option>
+          <option value="network_hashrate" selected>Network hashrate</option>
           <option value="rpc_latency_ms">RPC latency (ms)</option>
           <option value="memory_used_percent">Memory used %</option>
           <option value="swap_used_percent">Swap used %</option>
@@ -552,6 +570,7 @@
           <option value="temperature_c">CPU temperature</option>
           <option value="electrumx_clients">ElectrumX clients</option>
           <option value="health_score">Health score</option>
+          <option value="price_rvn_usdt">RVN / USDT price</option>
         </select>
         <select id="chart-range">
           <option value="1h">1h</option>
@@ -580,105 +599,116 @@
       <div class="metric-row"><span class="k">Min fee</span><span class="v mono" id="mempool-minfee">-</span></div>
     </div>
 
-    <div class="card span-2">
-      <h2>Mempool transactions <span class="peer-count-tag" id="mempool-tx-count"></span></h2>
-      <div class="table-toolbar"><input type="search" class="table-search" id="mempool-search" placeholder="Filter by TXID, kind, asset..."></div>
-      <div class="peer-scroll">
-        <table class="peer-table" id="mempool-tx-table">
-          <thead><tr>
-            <th data-key="txid">TXID<span class="sort-arrow"></span></th>
-            <th data-key="kind">Kind<span class="sort-arrow"></span></th>
-            <th data-key="size">Size<span class="sort-arrow"></span></th>
-            <th data-key="fee">Fee<span class="sort-arrow"></span></th>
-            <th data-key="time">Age<span class="sort-arrow"></span></th>
-            <th data-key="depends">Deps<span class="sort-arrow"></span></th>
-          </tr></thead>
-          <tbody id="mempool-tx-rows"><tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
-        </table>
+    <div class="two-col-section">
+      <div class="col">
+        <div class="card">
+          <h2>Mempool transactions <span class="peer-count-tag" id="mempool-tx-count"></span></h2>
+          <div class="table-toolbar"><input type="search" class="table-search" id="mempool-search" placeholder="Filter by TXID, kind, asset..."></div>
+          <div class="peer-scroll">
+            <table class="peer-table" id="mempool-tx-table">
+              <thead><tr>
+                <th data-key="txid">TXID<span class="sort-arrow"></span></th>
+                <th data-key="kind">Kind<span class="sort-arrow"></span></th>
+                <th data-key="size">Size<span class="sort-arrow"></span></th>
+                <th data-key="fee">Fee<span class="sort-arrow"></span></th>
+                <th data-key="time">Age<span class="sort-arrow"></span></th>
+                <th data-key="depends">Deps<span class="sort-arrow"></span></th>
+              </tr></thead>
+              <tbody id="mempool-tx-rows"><tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Recent blocks</h2>
+          <div class="peer-scroll">
+            <table class="peer-table">
+              <thead><tr><th>Height</th><th>Age</th><th>Txs</th><th>Size</th></tr></thead>
+              <tbody id="block-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" id="card-events">
+          <h2>Event timeline</h2>
+          <div class="event-toolbar">
+            <select id="event-severity">
+              <option value="">All severities</option>
+              <option value="info">Info+</option>
+              <option value="warning">Warning+</option>
+              <option value="critical">Critical only</option>
+            </select>
+          </div>
+          <div class="event-list" id="event-list"><div class="chart-empty">No events yet</div></div>
+        </div>
+
+        <div class="card">
+          <h2>Banned peers <span class="peer-count-tag" id="banned-count"></span></h2>
+          <div class="peer-scroll">
+            <table class="peer-table">
+              <thead><tr><th>Address</th><th>Reason</th><th>Expires</th></tr></thead>
+              <tbody id="banned-rows"><tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
       </div>
-    </div>
 
-    <div class="card span-2">
-      <h2>Network peers <span class="peer-count-tag" id="peer-count"></span></h2>
-      <div class="peer-stats-row" id="peer-stats-row"></div>
-      <div class="table-toolbar"><input type="search" class="table-search" id="peer-search" placeholder="Filter by address, subversion..."></div>
-      <div class="peer-scroll">
-        <table class="peer-table" id="peer-table">
-          <thead><tr>
-            <th data-key="addr">Address<span class="sort-arrow"></span></th>
-            <th data-key="inbound">Dir<span class="sort-arrow"></span></th>
-            <th data-key="subver">Subversion<span class="sort-arrow"></span></th>
-            <th data-key="pingtime">Ping<span class="sort-arrow"></span></th>
-          </tr></thead>
-          <tbody id="peer-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
-        </table>
+      <div class="col">
+        <div class="card">
+          <h2>Network peers <span class="peer-count-tag" id="peer-count"></span></h2>
+          <div class="peer-stats-row" id="peer-stats-row"></div>
+          <div class="table-toolbar"><input type="search" class="table-search" id="peer-search" placeholder="Filter by address, subversion..."></div>
+          <div class="peer-scroll">
+            <table class="peer-table" id="peer-table">
+              <thead><tr>
+                <th data-key="addr">Address<span class="sort-arrow"></span></th>
+                <th data-key="inbound">Dir<span class="sort-arrow"></span></th>
+                <th data-key="subver">Subversion<span class="sort-arrow"></span></th>
+                <th data-key="pingtime">Ping<span class="sort-arrow"></span></th>
+              </tr></thead>
+              <tbody id="peer-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" id="card-electrumx-clients">
+          <h2>Connected Electrum clients <span class="peer-count-tag" id="client-count"></span></h2>
+          <div class="peer-scroll">
+            <table class="peer-table">
+              <thead><tr><th>Address</th><th>Client</th><th>Protocol</th><th>Duration</th></tr></thead>
+              <tbody id="client-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="two-col-section">
+          <div class="col">
+            <div class="card">
+              <h2>Host resources</h2>
+              <div class="metric-row"><span class="k">Load (1/5/15m)</span><span class="v mono" id="host-load">-</span></div>
+              <div class="metric-row"><span class="k">CPU temp</span><span class="v mono" id="host-temp">-</span></div>
+              <div class="metric-row" style="margin-top:2px;"><span class="k">Memory</span><span class="v mono" id="host-mem">-</span></div>
+              <div class="bar-mini"><div id="mem-bar" style="width:0%"></div></div>
+              <div class="metric-row" style="margin-top:6px;"><span class="k">Swap</span><span class="v mono" id="host-swap">-</span></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="card">
+              <h2>Storage</h2>
+              <div class="metric-row"><span class="k">Disk 1</span><span class="v mono" id="host-disk">-</span></div>
+              <div class="bar-mini"><div id="disk-bar" style="width:0%"></div></div>
+              <div id="extra-disks"></div>
+              <div class="metric-row" style="margin-top:6px;"><span class="k">Growth</span><span class="v mono" id="disk-runway-growth">-</span></div>
+              <div class="metric-row"><span class="k">Est. full</span><span class="v mono" id="disk-runway-eta">-</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="card-electrumx-checks">
+          <h2>Backend compatibility</h2>
+          <div class="checklist" id="compat-checklist"></div>
+        </div>
       </div>
-    </div>
-
-    <div class="card span-2" id="card-events">
-      <h2>Event timeline</h2>
-      <div class="event-toolbar">
-        <select id="event-severity">
-          <option value="">All severities</option>
-          <option value="info">Info+</option>
-          <option value="warning">Warning+</option>
-          <option value="critical">Critical only</option>
-        </select>
-      </div>
-      <div class="event-list" id="event-list"><div class="chart-empty">No events yet</div></div>
-    </div>
-
-    <div class="card span-2" id="card-electrumx-clients">
-      <h2>Connected Electrum clients <span class="peer-count-tag" id="client-count"></span></h2>
-      <div class="peer-scroll">
-        <table class="peer-table">
-          <thead><tr><th>Address</th><th>Client</th><th>Protocol</th><th>Duration</th></tr></thead>
-          <tbody id="client-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Recent blocks</h2>
-      <div class="peer-scroll">
-        <table class="peer-table">
-          <thead><tr><th>Height</th><th>Age</th><th>Txs</th><th>Size</th></tr></thead>
-          <tbody id="block-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Banned peers <span class="peer-count-tag" id="banned-count"></span></h2>
-      <div class="peer-scroll">
-        <table class="peer-table">
-          <thead><tr><th>Address</th><th>Reason</th><th>Expires</th></tr></thead>
-          <tbody id="banned-rows"><tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Host resources</h2>
-      <div class="metric-row"><span class="k">Load (1/5/15m)</span><span class="v mono" id="host-load">-</span></div>
-      <div class="metric-row"><span class="k">CPU temp</span><span class="v mono" id="host-temp">-</span></div>
-      <div class="metric-row" style="margin-top:2px;"><span class="k">Memory</span><span class="v mono" id="host-mem">-</span></div>
-      <div class="bar-mini"><div id="mem-bar" style="width:0%"></div></div>
-      <div class="metric-row" style="margin-top:6px;"><span class="k">Swap</span><span class="v mono" id="host-swap">-</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Storage</h2>
-      <div class="metric-row"><span class="k">Disk 1</span><span class="v mono" id="host-disk">-</span></div>
-      <div class="bar-mini"><div id="disk-bar" style="width:0%"></div></div>
-      <div id="extra-disks"></div>
-      <div class="metric-row" style="margin-top:6px;"><span class="k">Growth</span><span class="v mono" id="disk-runway-growth">-</span></div>
-      <div class="metric-row"><span class="k">Est. full</span><span class="v mono" id="disk-runway-eta">-</span></div>
-    </div>
-
-    <div class="card" id="card-electrumx-checks">
-      <h2>Backend compatibility</h2>
-      <div class="checklist" id="compat-checklist"></div>
     </div>
 
   </div>
@@ -952,6 +982,15 @@ function renderMempoolTxRows(txs) {
   }).join("");
   seenTxids = new Set(mempoolTxsRaw.map(tx => tx.txid).filter(Boolean));
   resetScrollX(tbody);
+
+  // A poll refresh rebuilds this table's rows from scratch every cycle -
+  // without this, any detail row you had open would silently vanish out
+  // from under you every 8 seconds.
+  if (openMempoolTxid) {
+    const row = tbody.querySelector(`tr.tx-row[data-txid="${CSS.escape(openMempoolTxid)}"]`);
+    if (row) toggleTxDetail(row);
+    else openMempoolTxid = null;
+  }
 }
 
 document.getElementById("mempool-search").addEventListener("input", (e) => {
@@ -975,15 +1014,20 @@ function renderTxOutputs(outputs) {
   </table>`;
 }
 
+let openMempoolTxid = null;
+
 async function toggleTxDetail(row, blockhash, colspan) {
   colspan = colspan || 6;
   const txid = row.dataset.txid;
+  const isMempoolRow = row.classList.contains("tx-row");
   const next = row.nextElementSibling;
   if (next && next.classList.contains("tx-detail-row")) {
     next.remove();
+    if (isMempoolRow && openMempoolTxid === txid) openMempoolTxid = null;
     return;
   }
   document.querySelectorAll(".tx-detail-row").forEach(el => el.remove());
+  if (isMempoolRow) openMempoolTxid = txid;
 
   const detailRow = document.createElement("tr");
   detailRow.className = "tx-detail-row";
@@ -1016,15 +1060,18 @@ async function toggleTxDetail(row, blockhash, colspan) {
 }
 
 const BLOCK_TXID_LIMIT = 500;
+let openBlockHash = null;
 
 async function toggleBlockDetail(row) {
   const hash = row.dataset.hash;
   const next = row.nextElementSibling;
   if (next && next.classList.contains("block-detail-row")) {
     next.remove();
+    if (openBlockHash === hash) openBlockHash = null;
     return;
   }
   document.querySelectorAll(".block-detail-row, .tx-detail-row").forEach(el => el.remove());
+  openBlockHash = hash;
 
   const detailRow = document.createElement("tr");
   detailRow.className = "block-detail-row";
@@ -1041,8 +1088,8 @@ async function toggleBlockDetail(row) {
     const block = await resp.json();
     const txids = block.txids || [];
     const shown = txids.slice(0, BLOCK_TXID_LIMIT);
-    const rows = shown.map(txid => `<tr class="block-tx-row" data-txid="${txid}" data-blockhash="${block.hash}">
-      <td class="mono">${txid}${copyBtn(txid)}</td>
+    const rows = shown.map(txid => `<tr class="block-tx-row" data-txid="${esc(txid)}" data-blockhash="${esc(block.hash)}">
+      <td class="mono">${esc(txid)}${copyBtn(txid)}</td>
     </tr>`).join("");
     const more = txids.length > BLOCK_TXID_LIMIT
       ? `<div style="padding:6px 8px;color:var(--text-muted);">+ ${txids.length - BLOCK_TXID_LIMIT} more</div>` : "";
@@ -1206,6 +1253,7 @@ const CHART_VALUE_FORMATTERS = {
   memory_used_percent: v => v.toFixed(0) + "%",
   swap_used_percent: v => v.toFixed(0) + "%",
   rpc_latency_ms: v => v.toFixed(0) + " ms",
+  price_rvn_usdt: v => "$" + v.toFixed(6),
 };
 
 function fmtChartValue(metric, v) {
@@ -1385,6 +1433,15 @@ function renderRecentBlocks(blocks) {
     <td>${fmtBytes(b.size)}</td>
   </tr>`).join("");
   resetScrollX(tbody);
+
+  // Same reasoning as the mempool table: a poll refresh rebuilds these
+  // rows every cycle, which would otherwise silently collapse an open
+  // block detail row out from under you.
+  if (openBlockHash) {
+    const row = tbody.querySelector(`tr.block-row[data-hash="${CSS.escape(openBlockHash)}"]`);
+    if (row) toggleBlockDetail(row);
+    else openBlockHash = null;
+  }
 }
 
 function renderBannedPeers(banned) {

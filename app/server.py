@@ -64,6 +64,12 @@ def price_loop():
             price = price_client.fetch_price(cfg.price_feed_symbol)
             with _state_lock:
                 _state["price"] = price
+            # This loop already runs at its own sensible cadence
+            # (PRICE_POLL_INTERVAL), so each successful fetch is sampled
+            # directly - no need to also gate it behind the main
+            # collector's history-sampling interval.
+            if mon_state.history is not None and price.get("last_price") is not None:
+                mon_state.history.insert_sample({"price_rvn_usdt": price["last_price"]})
         except Exception as exc:  # noqa: BLE001 - never let this kill the thread
             with _state_lock:
                 _state["price_error"] = str(exc)

@@ -24,6 +24,14 @@ class MemoryHistoryTests(unittest.TestCase):
         self.assertGreaterEqual(len(points), 1)
         self.assertAlmostEqual(points[-1]["value"], 101, delta=1)
 
+    def test_price_metric_accepted(self):
+        # Sampled independently from the main collector cycle (its own
+        # price-polling loop), so it gets its own whitelist entry.
+        store = history.HistoryStore("memory")
+        store.insert_sample({"price_rvn_usdt": 0.00285})
+        points = store.query_metric("price_rvn_usdt", "1h")
+        self.assertEqual(len(points), 1)
+
     def test_unknown_metric_rejected(self):
         store = history.HistoryStore("memory")
         with self.assertRaises(ValueError):
