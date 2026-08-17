@@ -21,6 +21,16 @@ jobs:
           pip install ruff
           ruff check --select E9,F app contrib
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run test suite (mocked Ravencoin Core, no live node required)
+        run: python -m unittest discover -t . -s tests -p "test_*.py" -v
+
   docker-build:
     runs-on: ubuntu-latest
     steps:
@@ -35,5 +45,7 @@ jobs:
           sleep 3
           curl -sf -o /dev/null http://127.0.0.1:18899/
           curl -sf -o /dev/null http://127.0.0.1:18899/api/status
+          curl -sf -o /dev/null http://127.0.0.1:18899/healthz
+          curl -sf -o /dev/null http://127.0.0.1:18899/metrics
           docker logs ci-smoketest
           docker rm -f ci-smoketest

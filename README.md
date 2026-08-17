@@ -1,20 +1,22 @@
 # ravencoin-node-monitor
 
-A lightweight, LAN-only monitoring dashboard for a Ravencoin Core node,
-optionally paired with ElectrumX. One adaptive UI: it shows Core-only
-metrics for a standalone node, and automatically adds ElectrumX server /
-connected-client cards when ElectrumX is reachable.
+A lightweight Ravencoin Core node health, security, and diagnostics
+monitor, optionally paired with ElectrumX. One adaptive UI: it shows
+Core-only metrics for a standalone node, and automatically adds ElectrumX
+server / connected-client cards when ElectrumX is reachable.
 
 Stdlib-only Python (no pip dependencies), a single static HTML page, and a
 Docker image that runs on anything from a Raspberry Pi to a VPS.
 
 ## Features
 
+**Monitoring**
 - Sync status, network hashrate, P2P peers (with addresses), mempool stats
   and transaction list (with RVN vs. asset-transfer classification), host
   resource usage (load, memory, swap, disk, CPU temperature)
 - Click a mempool transaction for full detail: inputs, and every output's
-  address, type, and RVN or asset amount
+  address, type, and RVN or asset amount; click a recent block to see its
+  full transaction list
 - Sortable and filterable peer/mempool tables, copy-to-clipboard on
   addresses and TXIDs, manual light/dark/auto theme toggle
 - Reports disk usage for extra mounted volumes (e.g. blockchain data on a
@@ -24,8 +26,38 @@ Docker image that runs on anything from a Raspberry Pi to a VPS.
 - Optional RVN/USDT price ticker (Binance public API)
 - Optional ElectrumX section: server info and a live list of connected
   Electrum clients with their addresses
-- Zero third-party Python packages, single JSON `/api/status` endpoint,
-  auto-refreshing page
+
+**Health, diagnostics & operations**
+- A deterministic Node Health score (0-100) derived from chain state, RPC
+  reachability, peer count, disk usage, mempool, and ElectrumX lag
+- Chain integrity monitor: stale-tip detection, reorg detection, headers
+  vs. validated-blocks lag, alternate chain tips (`getchaintips`)
+- Core version safety check against an optional configured minimum,
+  entirely offline - no internet access is ever made mandatory
+- An internal event system (new block, Core down/recovered, reorg, disk
+  warning/critical, ElectrumX down/recovered/behind, peer count low, Core
+  restart detected, ...) that fires only on real state transitions, never
+  once per poll cycle, with a browsable timeline in the UI
+- Lightweight in-RAM history (see "History storage" below) with small
+  built-in charts (no charting library) and a disk-usage growth/runway
+  estimate
+- Peer intelligence: inbound/outbound, IPv4/IPv6/Tor counts, subversion
+  distribution - no external GeoIP lookups
+- Richer Ravencoin asset classification: issuance, reissue, transfer,
+  qualifier, sub-qualifier, restricted, unique, and ownership-token assets
+  distinguished where Core's own RPC output makes it possible to do so
+  reliably (reported as `unknown` rather than guessed otherwise)
+- Optional generic webhook alerting on event state transitions, with a
+  cooldown so a flapping condition can't spam it
+- `/healthz`, `/readyz`, and an optional `/metrics` (Prometheus text
+  format, hand-rolled - no client library) for external monitoring
+- Optional `PRIVACY_MODE` masks IP addresses server-side, before they ever
+  reach the browser
+- A sanitized `/api/diagnostics` export for bug reports - never includes
+  RPC credentials, webhook URLs, or other secrets
+
+Zero third-party Python packages, one JSON `/api/status` endpoint plus a
+handful of small focused endpoints, auto-refreshing page.
 
 ## Quick start
 
@@ -57,6 +89,16 @@ full list with defaults. Highlights:
 | `ELECTRUMX_SSL_HOST` / `_PORT` / `_SNI` | ElectrumX's public `ssl://` port, used read-only for backend sync info |
 | `PRICE_FEED_ENABLED` | Off by default; set `true` to poll Binance for RVN/USDT |
 | `EXTRA_DISK_PATHS` | `Label=/path,Label2=/path2` - report disk usage for extra mounted volumes beyond `/` |
+| `HISTORY_ENABLED` / `HISTORY_STORAGE` | History on by default, RAM-only (`memory`) by default - see "History storage" |
+| `PRIVACY_MODE` | Mask IPs server-side (`192.168.1.123` -> `192.168.x.x`) before they reach the browser |
+| `PROMETHEUS_ENABLED` | Expose `/metrics` in Prometheus text format (on by default) |
+| `MIN_SAFE_CORE_VERSION` | e.g. `4.8.0` - flag the running Core version against a minimum, offline, no effect if unset |
+| `ALERT_WEBHOOK_URL` | Generic webhook (unset by default) - see "Alerting" |
+
+See `.env.example` for the full list, including health-threshold tuning
+(`DISK_WARNING_PERCENT`, `ELECTRUMX_CRITICAL_LAG`, `CHAIN_STALE_WARNING_SECONDS`,
+`HEALTH_MIN_PEERS`, `RPC_LATENCY_WARNING_MS`, ...) - every threshold has a
+sane default; none of this needs to be touched to get a working monitor.
 
 Credentials can be supplied either as plain environment variables or as
 file paths (`*_FILE`), so you can mount Docker/Compose secrets instead of
@@ -157,6 +199,131 @@ is a real limitation of the node's RPC surface, not something the monitor
 works around - unspent and mempool transactions always resolve fine either
 way.
 
+## Node Health
+
+`/api/health` (and the panel at the top of the dashboard) exposes a
+deterministic 0-100 score plus a `healthy` / `warning` / `critical` /
+`unknown` status, computed server-side from fixed, documented rules - not
+an arbitrary UI-only calculation:
+
+| Component | Warning | Critical |
+|---|---|---|
+| Chain | tip stale > `CHAIN_STALE_WARNING_SECONDS`, or headers running ahead of validated blocks | tip stale > `CHAIN_STALE_CRITICAL_SECONDS` |
+| Core RPC | average latency > `RPC_LATENCY_WARNING_MS` | Core unreachable (score forced to 0) |
+| Peers | fewer than `HEALTH_MIN_PEERS` | zero peers |
+| Disk | usage > `DISK_WARNING_PERCENT` (worst of root + any extra disk) | usage > `DISK_CRITICAL_PERCENT` |
+| ElectrumX | lag >= `ELECTRUMX_WARNING_LAG` blocks, or unreachable while `ELECTRUMX_ENABLED=true` | lag >= `ELECTRUMX_CRITICAL_LAG` blocks |
+| Mempool | data partially unavailable | - (informational only) |
+
+A reorg is reported as a transient warning on the chain component and as
+a `reorg_detected` event, never silently absorbed into the score. Core's
+`-28 RPC_IN_WARMUP` state (loading the block index right after a restart)
+is reported as `unknown`, not `critical` - it isn't a fault.
+
+## Event system
+
+Events fire only on state *transitions* (Core going down, then recovering;
+disk crossing into warning, then back out; a reorg; a new block) - never
+once per poll cycle, so a persistently unhealthy condition doesn't spam
+the timeline. `GET /api/events?severity=warning&limit=100` (severity is
+optional, `info`/`warning`/`critical`; results are newest-first, capped at
+500 regardless of the requested limit).
+
+## History storage
+
+**History is RAM-only by default and does not survive a restart - this is
+intentional.** The typical deployment target for this project is a
+Raspberry Pi or similar SBC running off a microSD card, eMMC, or a small
+SSD; writing a time-series sample to flash every poll cycle, forever,
+is exactly the kind of write amplification that shortens the life of that
+storage. Under the default configuration this project makes **zero**
+periodic writes to persistent storage:
+
+- History lives in SQLite's `:memory:` mode (`HISTORY_STORAGE=memory`) -
+  genuine SQL range/bucketing queries power the charts and disk-runway
+  estimate, but the data only ever exists in the process's own RAM.
+- The event timeline is a bounded in-memory list (`EVENT_HISTORY_MAX`,
+  default 2000 events).
+- Two independent bounds keep memory predictable regardless of uptime: a
+  retention window (`HISTORY_RETENTION_HOURS`, default 168 = 7 days) and a
+  hard per-metric row cap (`HISTORY_MAX_SAMPLES`, default 20160) that
+  applies even if the retention sweep ever falls behind.
+- History samples are decoupled from the poll interval
+  (`HISTORY_SAMPLE_INTERVAL`, default 60s) - the dashboard itself can keep
+  polling Core every few seconds without that cadence also controlling how
+  fast history grows.
+
+At the defaults (17 tracked metrics, 60s sampling, 7-day retention) this
+is roughly 1,000 rows/hour, ~170,000 rows at steady state, on the order of
+**15-20MB of RAM** including the event log - genuinely lightweight.
+
+Restarting the monitor (or its container, or the host) resets history to
+empty; the dashboard handles this gracefully ("Collecting historical
+data..." until enough samples exist) rather than erroring.
+
+If you specifically want history to survive restarts and accept the write
+wear, opt in explicitly:
+
+```
+HISTORY_STORAGE=sqlite
+HISTORY_DB_PATH=/data/history.db
+```
+
+This never happens silently in either direction - `memory` never falls
+back to writing a file, and `sqlite` never silently reverts to memory-only
+if its path is misconfigured (it fails to start instead). If you want
+long-term history without local writes at all, use the `/metrics`
+endpoint with an external Prometheus-compatible collector instead of
+asking this process to accumulate months of samples on its own.
+
+## Alerting
+
+Set `ALERT_WEBHOOK_URL` to receive a POST on every event whose severity is
+at or above `ALERT_MIN_SEVERITY` (default `warning`), with at least
+`ALERT_COOLDOWN_SECONDS` (default 900) between repeats of the same event
+type - a flapping condition can't spam the endpoint. Delivery runs off the
+poll loop's thread and never affects monitoring even if the webhook is
+slow, unreachable, or misconfigured; failures are never logged (the URL
+itself may carry a secret token). Payload:
+
+```json
+{"service": "ravencoin-node-monitor", "severity": "critical",
+ "event": "core_unreachable", "message": "...", "timestamp": "..."}
+```
+
+## Operational endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | Process liveness - is the poll loop thread running |
+| `GET /readyz` | Is Core reachable and past warmup (suitable for a Docker `HEALTHCHECK` or an orchestrator readiness probe) |
+| `GET /metrics` | Prometheus text exposition format (disable with `PROMETHEUS_ENABLED=false`); no peer IPs or other identifying strings are ever put in a label |
+| `GET /api/health` | The Node Health object described above |
+| `GET /api/events` | Recent events, `?severity=` and `?limit=` (capped at 500) |
+| `GET /api/history` | `?metric=<name>&range=1h\|6h\|24h\|7d\|30d` - `metric` is checked against a fixed whitelist, never arbitrary |
+| `GET /api/diagnostics` | Sanitized bug-report bundle - see below |
+
+## Diagnostics export
+
+`GET /api/diagnostics` returns a JSON bundle suitable for attaching to a
+bug report: app/Core version, chain and health state, a config summary,
+peer aggregates, storage/resource status, ElectrumX status, and the last
+50 events. It is built from an explicit field whitelist, not by dumping
+config or internal state, specifically so a future config field can never
+leak into it by accident. It never includes RPC credentials, the alert
+webhook URL (only whether one is configured), or, when `PRIVACY_MODE` is
+on, unmasked IPs.
+
+## Privacy mode
+
+`PRIVACY_MODE=true` masks IPv4 (`192.168.1.123` -> `192.168.x.x`) and IPv6
+(`2001:db8::1` -> `2001:db8:x:x:x:x`) addresses in peer lists, banned-peer
+entries, and ElectrumX client sessions. Masking happens **server-side**,
+before the snapshot is ever serialized to JSON - a raw address is never
+sent to the browser in the first place, so there's nothing for the
+frontend to accidentally leak. `.onion` addresses are left as-is (they
+aren't real, geolocatable IPs to begin with).
+
 ## Updating a running deployment
 
 If you're running via `docker compose` and only copy new source files into
@@ -183,6 +350,27 @@ python3 server.py
 ```
 
 No dependencies beyond Python 3.9+.
+
+## Docker hardening
+
+The default `docker-compose.yml` runs the container with `read_only: true`,
+`cap_drop: [ALL]`, and `no-new-privileges` - genuine hardening rather than
+cosmetic, made possible by history being RAM-only by default (nothing on
+disk needs to be writable under normal operation). If you opt into
+`HISTORY_STORAGE=sqlite`, mount a volume at `/data` (see the commented
+example in `docker-compose.yml`) - the rest of the container stays
+read-only.
+
+## Development
+
+```bash
+python3 -m unittest discover -t . -s tests -p "test_*.py"
+```
+
+Tests run against a programmable fake Ravencoin Core JSON-RPC responder
+(`tests/fake_rpc.py`) - no live node is required, and none of the tests
+make real network calls. CI (`.github/workflows/ci.yml`) runs this suite
+plus `ruff` and a Docker build/smoke test on every push.
 
 ## License
 

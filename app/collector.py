@@ -3,39 +3,23 @@ included, hidden, or surfaced as an error depending on `electrumx_mode`
 ("auto" / "true" / "false") - this is what makes the dashboard adaptive
 without needing two separate codebases for standalone-Core vs
 Core+ElectrumX deployments.
+
+`build_snapshot(cfg, state)` is the entry point the poll loop calls each
+cycle. `state` (state.MonitorState) carries everything that needs to
+survive between cycles - chain baseline, mempool classification cache,
+event log, RAM history, alert cooldowns - and is only ever mutated from
+the single poll-loop thread, so nothing in here needs a lock of its own.
 """
 
 import time
 
+import assets
+import chain
 import electrumx as electrumx_client
+import health as health_engine
+import privacy
 import rpc
 from hoststats import get_host_stats
-
-
-def _classify_mempool_txs(cfg, items, errors):
-    subset = items[: cfg.mempool_classify_limit]
-    if not subset:
-        return
-    calls = [("getrawtransaction", [it["txid"], True]) for it in subset]
-    try:
-        results = rpc.call_batch(cfg, calls)
-    except rpc.RpcError as exc:
-        errors.append(f"getrawtransaction (batch): {exc}")
-        return
-    for item, (tx, err) in zip(subset, results):
-        if err or tx is None:
-            item["kind"] = None
-            item["asset_name"] = None
-            continue
-        asset_name = None
-        for vout in tx.get("vout", []):
-            asset = (vout.get("scriptPubKey") or {}).get("asset")
-            if asset:
-                asset_name = asset.get("name")
-                break
-        item["kind"] = "ASSET" if asset_name else "RVN"
-        item["asset_name"] = asset_name
-
 
 RECENT_BLOCKS_COUNT = 8
 
@@ -74,6 +58,34 @@ def _get_recent_blocks(cfg, tip_height, errors):
     return blocks
 
 
+def _core_version_status(network, cfg):
+    if not network:
+        return None
+    minimum = (cfg.min_safe_core_version or "").strip()
+    # Core reports this as "/Ravencoin:4.8.0/" - the slashes are wire-format
+    # framing from the P2P subversion string, not part of the version.
+    subversion = (network.get("subversion") or "").strip("/") or None
+    result = {
+        "version": subversion,
+        "protocol_version": network.get("protocolversion"),
+        "minimum_safe_version": minimum or None,
+        "safe": True,
+    }
+    if not minimum:
+        return result
+    try:
+        parts = [int(p) for p in minimum.split(".")[:3]]
+        while len(parts) < 3:
+            parts.append(0)
+        min_encoded = parts[0] * 1_000_000 + parts[1] * 10_000 + parts[2] * 100
+    except ValueError:
+        return result  # malformed MIN_SAFE_CORE_VERSION - don't guess, just skip the check
+    running = network.get("version")
+    if isinstance(running, int):
+        result["safe"] = running >= min_encoded
+    return result
+
+
 def _collect_core(cfg, errors):
     blockchain = None
     try:
@@ -93,6 +105,8 @@ def _collect_core(cfg, errors):
             "peers": None,
             "banned_peers": None,
             "recent_blocks": None,
+            "chain_tips": None,
+            "core_version": None,
             "uptime_seconds": None,
         }
     except rpc.RpcError as exc:
@@ -113,6 +127,8 @@ def _collect_core(cfg, errors):
     mempool_txs = None
     try:
         raw_mempool = rpc.call(cfg, "getrawmempool", [True])
+        if not isinstance(raw_mempool, dict):
+            raise rpc.RpcError(f"malformed getrawmempool result: {raw_mempool!r}")
         items = [
             {
                 "txid": txid,
@@ -125,14 +141,16 @@ def _collect_core(cfg, errors):
         ]
         items.sort(key=lambda x: x["time"] or 0, reverse=True)
         mempool_txs = items[: cfg.mempool_tx_limit]
-        if cfg.mempool_classify:
-            _classify_mempool_txs(cfg, mempool_txs, errors)
+        # Classification (kind/asset_name/...) happens in build_snapshot,
+        # via the incremental cache - _collect_core stays cache-agnostic.
     except rpc.RpcError as exc:
         errors.append(f"getrawmempool: {exc}")
 
     peers = None
     try:
         raw_peers = rpc.call(cfg, "getpeerinfo")
+        if not isinstance(raw_peers, list):
+            raise rpc.RpcError(f"malformed getpeerinfo result: {raw_peers!r}")
         peers = [
             {
                 "addr": p.get("addr"),
@@ -141,6 +159,8 @@ def _collect_core(cfg, errors):
                 "conntime": p.get("conntime"),
                 "pingtime": p.get("pingtime"),
                 "synced_blocks": p.get("synced_blocks"),
+                "bytessent": p.get("bytessent"),
+                "bytesrecv": p.get("bytesrecv"),
             }
             for p in raw_peers
         ]
@@ -150,6 +170,8 @@ def _collect_core(cfg, errors):
     banned_peers = None
     try:
         raw_banned = rpc.call(cfg, "listbanned")
+        if not isinstance(raw_banned, list):
+            raise rpc.RpcError(f"malformed listbanned result: {raw_banned!r}")
         banned_peers = [
             {
                 "address": b.get("address"),
@@ -175,6 +197,8 @@ def _collect_core(cfg, errors):
         errors.append(f"getnetworkhashps: {exc}")
 
     recent_blocks = _get_recent_blocks(cfg, blockchain.get("blocks") if blockchain else None, errors)
+    chain_tips = chain.get_chain_tips(cfg, rpc)
+    core_version = _core_version_status(network, cfg)
 
     return {
         "starting_up": False,
@@ -187,6 +211,8 @@ def _collect_core(cfg, errors):
         "peers": peers,
         "banned_peers": banned_peers,
         "recent_blocks": recent_blocks,
+        "chain_tips": chain_tips,
+        "core_version": core_version,
         "uptime_seconds": uptime_seconds,
     }
 
@@ -214,6 +240,9 @@ def get_tx_detail(cfg, txid, blockhash=None):
     else:
         tx = rpc.call(cfg, "getrawtransaction", [txid, True])
 
+    if not isinstance(tx, dict):
+        raise rpc.RpcError(f"malformed getrawtransaction result: {tx!r}")
+
     outputs = []
     total_rvn = 0.0
     for vout in tx.get("vout", []):
@@ -222,6 +251,7 @@ def get_tx_detail(cfg, txid, blockhash=None):
         value = vout.get("value")
         if value is not None and asset is None:
             total_rvn += value
+        classification = assets.classify_vout(vout)
         outputs.append(
             {
                 "n": vout.get("n"),
@@ -229,6 +259,8 @@ def get_tx_detail(cfg, txid, blockhash=None):
                 "addresses": script.get("addresses") or ([script["address"]] if script.get("address") else []),
                 "type": script.get("type"),
                 "asset": {"name": asset.get("name"), "amount": asset.get("amount")} if asset else None,
+                "asset_operation": classification["asset_operation"],
+                "asset_subtype": classification["asset_subtype"],
             }
         )
 
@@ -260,6 +292,8 @@ def get_block_detail(cfg, blockhash):
     this blockhash) only when the user drills into one.
     """
     block = rpc.call(cfg, "getblock", [blockhash, 1])
+    if not isinstance(block, dict):
+        raise rpc.RpcError(f"malformed getblock result: {block!r}")
     return {
         "hash": block.get("hash"),
         "height": block.get("height"),
@@ -288,10 +322,174 @@ def _collect_electrumx(cfg):
     return {"info": info, "sessions": sessions, "backend": backend}
 
 
-def build_snapshot(cfg):
+def _peer_aggregates(peers):
+    if not peers:
+        return None
+    inbound = sum(1 for p in peers if p.get("inbound"))
+    ipv4 = ipv6 = tor = 0
+    versions = {}
+    for p in peers:
+        addr = p.get("addr") or ""
+        host = addr.rsplit(":", 1)[0] if addr.count(":") <= 1 else addr
+        if host.endswith(".onion"):
+            tor += 1
+        elif ":" in host.strip("[]"):
+            ipv6 += 1
+        else:
+            ipv4 += 1
+        subver = p.get("subver") or "unknown"
+        versions[subver] = versions.get(subver, 0) + 1
+    return {
+        "total": len(peers),
+        "inbound": inbound,
+        "outbound": len(peers) - inbound,
+        "ipv4": ipv4,
+        "ipv6": ipv6,
+        "tor": tor,
+        "version_distribution": versions,
+    }
+
+
+def _derive_events(state, cfg, snapshot):
+    """Turns this cycle's health/status view into events, but only on
+    genuine state transitions - never once per poll cycle. Returns the
+    list of newly generated events (also already added to state.event_log
+    and dispatched to the webhook, if configured).
+    """
+    new_events = []
+
+    def emit(event_type, severity, message, metadata=None):
+        event = {
+            "timestamp": time.time(),
+            "type": event_type,
+            "severity": severity,
+            "message": message,
+            "metadata": metadata or {},
+        }
+        new_events.append(event)
+        state.event_log.add(event)
+        state.alert_dispatcher.maybe_send(event, cfg)
+
+    health = snapshot.get("health") or {}
+    components = health.get("components") or {}
+
+    # Core reachability: the clearest possible transition (blockchain is
+    # None only when the RPC call itself failed, not during warmup).
+    core_reachable = snapshot.get("blockchain") is not None or snapshot.get("starting_up")
+    t = state.transitions.check("core_reachable", core_reachable)
+    if t and t["old"] is not None:
+        if core_reachable:
+            emit("core_recovered", "info", "Ravencoin Core RPC is reachable again")
+        else:
+            emit("core_unreachable", "critical", "Ravencoin Core RPC is unreachable")
+
+    if not snapshot.get("starting_up") and snapshot.get("blockchain"):
+        height = snapshot["blockchain"].get("blocks")
+        if height is not None and state.last_block_height is not None and height > state.last_block_height:
+            emit("new_block", "info", f"New block #{height}", {"height": height})
+        state.last_block_height = height if height is not None else state.last_block_height
+
+        uptime = snapshot.get("uptime_seconds")
+        if uptime is not None:
+            if state.last_uptime_seconds is not None and uptime < state.last_uptime_seconds - 5:
+                emit("core_restart_detected", "warning", "Ravencoin Core restart detected")
+            state.last_uptime_seconds = uptime
+
+    peers_status = (components.get("peers") or {}).get("status")
+    if peers_status:
+        t = state.transitions.check("peers_status", peers_status)
+        if t and t["old"] is not None:
+            if peers_status in (health_engine.STATUS_WARNING, health_engine.STATUS_CRITICAL):
+                emit("peer_count_low", "warning" if peers_status == "warning" else "critical", components["peers"]["detail"])
+            elif peers_status == health_engine.STATUS_HEALTHY:
+                emit("peer_count_recovered", "info", "Peer count back to normal")
+
+    disk_status = (components.get("disk") or {}).get("status")
+    if disk_status:
+        t = state.transitions.check("disk_status", disk_status)
+        if t and t["old"] is not None:
+            if disk_status == health_engine.STATUS_CRITICAL:
+                emit("disk_critical", "critical", components["disk"]["detail"])
+            elif disk_status == health_engine.STATUS_WARNING:
+                emit("disk_warning", "warning", components["disk"]["detail"])
+            elif disk_status == health_engine.STATUS_HEALTHY:
+                emit("disk_recovered", "info", "Disk usage back to normal")
+
+    chain_stale = (snapshot.get("chain_status") or {}).get("stale")
+    if chain_stale and chain_stale != "unknown":
+        t = state.transitions.check("chain_stale", chain_stale in ("warning", "critical"))
+        if t and t["old"] is not None:
+            if chain_stale in ("warning", "critical"):
+                emit("chain_stale", "warning" if chain_stale == "warning" else "critical", "Chain tip has not advanced recently")
+            else:
+                emit("chain_recovered", "info", "Chain tip is advancing normally again")
+
+    ex_present = snapshot.get("electrumx") is not None
+    if cfg.electrumx_mode != "false":
+        t = state.transitions.check("electrumx_reachable", ex_present)
+        if t and t["old"] is not None:
+            emit("electrumx_recovered", "info", "ElectrumX is reachable again") if ex_present else emit(
+                "electrumx_unreachable", "warning", "ElectrumX is unreachable"
+            )
+        ex_status = (components.get("electrumx") or {}).get("status")
+        if ex_status:
+            t = state.transitions.check("electrumx_lag_status", ex_status)
+            if t and t["old"] is not None:
+                if ex_status in (health_engine.STATUS_WARNING, health_engine.STATUS_CRITICAL):
+                    emit("electrumx_behind", "warning", components["electrumx"]["detail"])
+                elif ex_status == health_engine.STATUS_HEALTHY:
+                    emit("electrumx_caught_up", "info", "ElectrumX has caught up with Core")
+
+    return new_events
+
+
+def _history_metrics(snapshot):
+    blockchain = snapshot.get("blockchain") or {}
+    peers = snapshot.get("peers") or []
+    mempool = snapshot.get("mempool") or {}
+    host = snapshot.get("host") or {}
+    disk = host.get("disk") or {}
+    mem = host.get("mem") or {}
+    swap = host.get("swap") or {}
+    load = host.get("load") or {}
+    rpc_latency = snapshot.get("rpc_latency") or {}
+    ex = snapshot.get("electrumx")
+    ex_info = (ex or {}).get("info") or {}
+    health = snapshot.get("health") or {}
+    return {
+        "block_height": blockchain.get("blocks"),
+        "peer_count": len(peers) if peers else None,
+        "inbound_peers": sum(1 for p in peers if p.get("inbound")) if peers else None,
+        "outbound_peers": sum(1 for p in peers if not p.get("inbound")) if peers else None,
+        "mempool_tx_count": mempool.get("size"),
+        "mempool_size_bytes": mempool.get("bytes"),
+        "network_hashrate": snapshot.get("network_hashrate"),
+        "rpc_latency_ms": rpc_latency.get("current_ms"),
+        "electrumx_height": ex_info.get("db height"),
+        "electrumx_clients": len(ex.get("sessions") or []) if ex else None,
+        "load1": load.get("1m"),
+        "memory_used_percent": mem.get("used_percent"),
+        "swap_used_percent": swap.get("used_percent"),
+        "disk_used_percent": disk.get("used_percent"),
+        "disk_free_gb": disk.get("free_gb"),
+        "temperature_c": host.get("cpu_temp_c"),
+        "health_score": health.get("score"),
+    }
+
+
+def build_snapshot(cfg, state):
     errors = []
     core = _collect_core(cfg, errors)
     starting_up = core.get("starting_up", False)
+
+    if core.get("mempool_txs") is not None:
+        state.mempool_cache.classify(cfg, core["mempool_txs"], errors)
+
+    chain_status, chain_events = state.chain_monitor.observe(core.get("blockchain"), core.get("recent_blocks"))
+    for ev in chain_events:
+        full_event = {"timestamp": time.time(), **ev}
+        state.event_log.add(full_event)
+        state.alert_dispatcher.maybe_send(full_event, cfg)
 
     electrumx_data = None
     if cfg.electrumx_mode != "false" and not starting_up:
@@ -303,12 +501,26 @@ def build_snapshot(cfg):
             # "auto" mode: stay silent, just leave the section absent so the
             # UI hides it instead of showing a permanent error banner.
 
-    return {
+    snapshot = {
         "timestamp": time.time(),
         "node_name": cfg.node_name,
         "mode": "electrumx" if electrumx_data else "core",
         "host": get_host_stats(cfg.extra_disk_paths),
         "electrumx": electrumx_data,
         "errors": errors,
+        "chain_status": chain_status,
+        "rpc_latency": rpc.latency_tracker.snapshot(),
+        "peer_stats": _peer_aggregates(core.get("peers")),
+        "asset_activity": assets.detect_mempool_anomalies(core.get("mempool_txs")),
         **core,
     }
+
+    snapshot["health"] = health_engine.compute_health(snapshot, cfg)
+
+    _derive_events(state, cfg, snapshot)
+
+    state.maybe_sample_history(cfg, _history_metrics(snapshot))
+
+    privacy.apply_privacy(snapshot, cfg.privacy_mode)
+
+    return snapshot

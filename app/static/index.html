@@ -184,7 +184,7 @@
     .big-number { font-size: 28px; }
     .table-search { max-width: none; }
   }
-  .card.hidden { display: none !important; }
+  .hidden { display: none !important; }
   .card h2 {
     font-size: 13px;
     text-transform: uppercase;
@@ -303,6 +303,97 @@
   .kind-badge.asset { background: var(--warn-soft); color: var(--warn); }
   .peer-count-tag { font-size: 12px; font-weight: 700; color: var(--text-muted); }
 
+  /* --- node health panel --- */
+  .health-panel {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px 28px;
+    align-items: flex-start;
+  }
+  .health-score-block { display: flex; align-items: baseline; gap: 14px; flex-shrink: 0; }
+  .health-score { font-size: 42px; font-weight: 800; letter-spacing: -0.02em; }
+  .health-score.healthy { color: var(--good); }
+  .health-score.warning { color: var(--warn); }
+  .health-score.critical { color: var(--bad); }
+  .health-score.unknown { color: var(--text-muted); }
+  .health-status-label {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 4px 10px; border-radius: 999px;
+  }
+  .health-status-label.healthy { background: var(--good-soft); color: var(--good); }
+  .health-status-label.warning { background: var(--warn-soft); color: var(--warn); }
+  .health-status-label.critical { background: var(--bad-soft); color: var(--bad); }
+  .health-status-label.unknown { background: var(--border); color: var(--text-muted); }
+  .health-components {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+    gap: 12px 22px;
+    flex: 1;
+    min-width: 240px;
+  }
+  .health-component-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .health-component-row .k {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .health-component-row .v {
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .health-component-row .v.healthy { color: var(--good); }
+  .health-component-row .v.warning { color: var(--warn); }
+  .health-component-row .v.critical { color: var(--bad); }
+  .health-component-row .v.unknown { color: var(--text-muted); }
+  @media (max-width: 640px) {
+    .health-panel { padding: 16px; gap: 16px 20px; }
+    .health-score { font-size: 34px; }
+    .health-components { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px 16px; }
+  }
+
+  /* --- event timeline --- */
+  .event-toolbar { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  .event-toolbar select {
+    padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 12.5px;
+  }
+  .event-list { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .event-row { display: flex; gap: 10px; padding: 6px 4px; font-size: 13px; border-bottom: 1px solid var(--border); align-items: baseline; }
+  .event-row:last-child { border-bottom: none; }
+  .event-time { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; width: 68px; }
+  .event-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+  .event-dot.info { background: var(--accent); }
+  .event-dot.warning { background: var(--warn); }
+  .event-dot.critical { background: var(--bad); }
+  .event-message { flex: 1; }
+
+  /* --- charts --- */
+  .chart-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .chart-toolbar select {
+    padding: 5px 8px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 12.5px;
+  }
+  canvas.chart-canvas { width: 100%; height: 160px; display: block; }
+  .chart-empty { color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0; }
+
+  /* --- peer intelligence summary --- */
+  .peer-stats-row { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--text-muted); margin-bottom: 10px; }
+  .peer-stats-row b { color: var(--text); }
+
   .theme-toggle {
     display: inline-flex;
     align-items: center;
@@ -402,6 +493,17 @@
 
   <div id="error-banner" class="error-banner"></div>
 
+  <div class="health-panel">
+    <div class="health-score-block">
+      <div>
+        <div class="health-score unknown" id="health-score">-</div>
+        <div style="font-size:11px;color:var(--text-muted);text-align:center;">/ 100</div>
+      </div>
+      <span class="health-status-label unknown" id="health-status-label">UNKNOWN</span>
+    </div>
+    <div class="health-components" id="health-components"></div>
+  </div>
+
   <div class="grid">
 
     <div class="card" id="card-price">
@@ -433,6 +535,34 @@
       <div class="metric-row"><span class="k">Protocol</span><span class="v mono" id="p2p-protocol">-</span></div>
       <div class="metric-row"><span class="k">Difficulty</span><span class="v mono" id="sync-difficulty">-</span></div>
       <div class="metric-row"><span class="k">Network hashrate</span><span class="v mono" id="p2p-hashrate">-</span></div>
+    </div>
+
+    <div class="card span-2" id="card-charts">
+      <h2>History</h2>
+      <div class="chart-toolbar">
+        <select id="chart-metric">
+          <option value="block_height">Block height</option>
+          <option value="peer_count" selected>Peer count</option>
+          <option value="mempool_tx_count">Mempool transactions</option>
+          <option value="network_hashrate">Network hashrate</option>
+          <option value="rpc_latency_ms">RPC latency (ms)</option>
+          <option value="memory_used_percent">Memory used %</option>
+          <option value="swap_used_percent">Swap used %</option>
+          <option value="disk_used_percent">Disk used %</option>
+          <option value="temperature_c">CPU temperature</option>
+          <option value="electrumx_clients">ElectrumX clients</option>
+          <option value="health_score">Health score</option>
+        </select>
+        <select id="chart-range">
+          <option value="1h">1h</option>
+          <option value="6h" selected>6h</option>
+          <option value="24h">24h</option>
+          <option value="7d">7d</option>
+          <option value="30d">30d</option>
+        </select>
+      </div>
+      <canvas class="chart-canvas" id="chart-canvas"></canvas>
+      <div class="chart-empty hidden" id="chart-empty">Collecting historical data...</div>
     </div>
 
     <div class="card" id="card-electrumx-server">
@@ -470,6 +600,7 @@
 
     <div class="card span-2">
       <h2>Network peers <span class="peer-count-tag" id="peer-count"></span></h2>
+      <div class="peer-stats-row" id="peer-stats-row"></div>
       <div class="table-toolbar"><input type="search" class="table-search" id="peer-search" placeholder="Filter by address, subversion..."></div>
       <div class="peer-scroll">
         <table class="peer-table" id="peer-table">
@@ -482,6 +613,19 @@
           <tbody id="peer-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
         </table>
       </div>
+    </div>
+
+    <div class="card span-2" id="card-events">
+      <h2>Event timeline</h2>
+      <div class="event-toolbar">
+        <select id="event-severity">
+          <option value="">All severities</option>
+          <option value="info">Info+</option>
+          <option value="warning">Warning+</option>
+          <option value="critical">Critical only</option>
+        </select>
+      </div>
+      <div class="event-list" id="event-list"><div class="chart-empty">No events yet</div></div>
     </div>
 
     <div class="card span-2" id="card-electrumx-clients">
@@ -528,6 +672,8 @@
       <div class="metric-row"><span class="k">Disk 1</span><span class="v mono" id="host-disk">-</span></div>
       <div class="bar-mini"><div id="disk-bar" style="width:0%"></div></div>
       <div id="extra-disks"></div>
+      <div class="metric-row" style="margin-top:6px;"><span class="k">Growth</span><span class="v mono" id="disk-runway-growth">-</span></div>
+      <div class="metric-row"><span class="k">Est. full</span><span class="v mono" id="disk-runway-eta">-</span></div>
     </div>
 
     <div class="card" id="card-electrumx-checks">
@@ -581,7 +727,7 @@ document.addEventListener("click", async (e) => {
 
 function copyBtn(value) {
   if (!value) return "";
-  return `<button class="copy-btn" data-copy="${value}" title="Copy">&#10697;</button>`;
+  return `<button class="copy-btn" data-copy="${esc(value)}" title="Copy">&#10697;</button>`;
 }
 
 const fmtInt = (n) => (n === null || n === undefined) ? "-" : Number(n).toLocaleString();
@@ -618,6 +764,19 @@ function fmtHashrate(hps) {
   let i = 0, v = hps;
   while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
   return v.toFixed(2) + " " + units[i];
+}
+
+// Every value that ultimately comes from the network or the blockchain
+// (peer subversion strings, ElectrumX client strings, asset names,
+// addresses, RPC error text) is untrusted input and must be escaped
+// before landing in an innerHTML template literal. This is the standard
+// textContent-roundtrip escape: setting textContent never interprets the
+// string as markup, and reading innerHTML back gives the escaped form.
+const _escDiv = document.createElement("div");
+function esc(value) {
+  if (value === null || value === undefined) return "";
+  _escDiv.textContent = String(value);
+  return _escDiv.innerHTML;
 }
 
 function setText(id, value) {
@@ -776,14 +935,14 @@ function renderMempoolTxRows(txs) {
     const shortId = tx.txid ? tx.txid.slice(0, 16) + "..." : "-";
     let kindBadge = "-";
     if (tx.kind === "ASSET") {
-      kindBadge = `<span class="kind-badge asset">ASSET${tx.asset_name ? ": " + tx.asset_name : ""}</span>`;
+      kindBadge = `<span class="kind-badge asset">ASSET${tx.asset_name ? ": " + esc(tx.asset_name) : ""}</span>`;
     } else if (tx.kind === "RVN") {
       kindBadge = `<span class="kind-badge rvn">RVN</span>`;
     }
     const fee = tx.fee !== null && tx.fee !== undefined ? tx.fee.toFixed(8) + " RVN" : "-";
     const isNew = seenTxids && tx.txid && !seenTxids.has(tx.txid);
-    return `<tr class="tx-row${isNew ? " tx-row-new" : ""}" data-txid="${tx.txid}">
-      <td class="mono">${shortId}${copyBtn(tx.txid)}</td>
+    return `<tr class="tx-row${isNew ? " tx-row-new" : ""}" data-txid="${esc(tx.txid)}">
+      <td class="mono">${esc(shortId)}${copyBtn(tx.txid)}</td>
       <td>${kindBadge}</td>
       <td>${fmtBytes(tx.size)}</td>
       <td class="mono">${fee}</td>
@@ -804,11 +963,11 @@ wireSortableHeaders("mempool-tx-table", mempoolSort, applyMempoolView);
 function renderTxOutputs(outputs) {
   if (!outputs || outputs.length === 0) return "<div style='color:var(--text-muted);font-size:12.5px;'>no outputs</div>";
   const rows = outputs.map(o => {
-    const addr = (o.addresses && o.addresses.length) ? o.addresses.join(", ") : "-";
+    const addr = (o.addresses && o.addresses.length) ? esc(o.addresses.join(", ")) : "-";
     const amount = o.asset
-      ? `<span class="kind-badge asset">ASSET: ${o.asset.name}</span> ${o.asset.amount ?? "-"}`
+      ? `<span class="kind-badge asset">ASSET: ${esc(o.asset.name)}</span> ${o.asset.amount ?? "-"}`
       : `<span class="kind-badge rvn">RVN</span> ${o.value !== null && o.value !== undefined ? o.value.toFixed(8) : "-"}`;
-    return `<tr><td>${o.n}</td><td class="mono">${addr}</td><td>${o.type || "-"}</td><td class="mono">${amount}</td></tr>`;
+    return `<tr><td>${o.n}</td><td class="mono">${addr}</td><td>${esc(o.type) || "-"}</td><td class="mono">${amount}</td></tr>`;
   }).join("");
   return `<table class="tx-output-table">
     <thead><tr><th>#</th><th>Address</th><th>Type</th><th>Amount</th></tr></thead>
@@ -836,7 +995,7 @@ async function toggleTxDetail(row, blockhash, colspan) {
     const resp = await fetch(url, { cache: "no-store" });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      detailRow.innerHTML = `<td colspan="${colspan}" style="color:var(--bad);">${err.error || "transaction not found"}</td>`;
+      detailRow.innerHTML = `<td colspan="${colspan}" style="color:var(--bad);">${esc(err.error) || "transaction not found"}</td>`;
       return;
     }
     const tx = await resp.json();
@@ -852,7 +1011,7 @@ async function toggleTxDetail(row, blockhash, colspan) {
       ${renderTxOutputs(tx.outputs)}
     </td>`;
   } catch (e) {
-    detailRow.innerHTML = `<td colspan="${colspan}" style="color:var(--bad);">Could not load transaction: ${e}</td>`;
+    detailRow.innerHTML = `<td colspan="${colspan}" style="color:var(--bad);">Could not load transaction: ${esc(e)}</td>`;
   }
 }
 
@@ -876,7 +1035,7 @@ async function toggleBlockDetail(row) {
     const resp = await fetch(`/api/block/${hash}`, { cache: "no-store" });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      detailRow.innerHTML = `<td colspan="4" style="color:var(--bad);">${err.error || "block not found"}</td>`;
+      detailRow.innerHTML = `<td colspan="4" style="color:var(--bad);">${esc(err.error) || "block not found"}</td>`;
       return;
     }
     const block = await resp.json();
@@ -898,7 +1057,7 @@ async function toggleBlockDetail(row) {
       ${more}
     </td>`;
   } catch (e) {
-    detailRow.innerHTML = `<td colspan="4" style="color:var(--bad);">Could not load block: ${e}</td>`;
+    detailRow.innerHTML = `<td colspan="4" style="color:var(--bad);">Could not load block: ${esc(e)}</td>`;
   }
 }
 
@@ -947,9 +1106,9 @@ function renderPeerRows(peers) {
     const ping = p.pingtime !== null && p.pingtime !== undefined ? (p.pingtime * 1000).toFixed(0) + " ms" : "-";
     const isNew = seenPeerAddrs && p.addr && !seenPeerAddrs.has(p.addr);
     return `<tr class="${isNew ? "peer-row-new" : ""}">
-      <td class="mono">${p.addr || "-"}${copyBtn(p.addr)}</td>
+      <td class="mono">${esc(p.addr) || "-"}${copyBtn(p.addr)}</td>
       <td>${dir}</td>
-      <td class="mono">${p.subver || "-"}</td>
+      <td class="mono">${esc(p.subver) || "-"}</td>
       <td>${ping}</td>
     </tr>`;
   }).join("");
@@ -963,6 +1122,254 @@ document.getElementById("peer-search").addEventListener("input", (e) => {
 });
 wireSortableHeaders("peer-table", peerSort, applyPeerView);
 
+const HEALTH_LABELS = {
+  chain: "Chain", rpc: "Core RPC", peers: "Peers", disk: "Disk",
+  mempool: "Mempool", electrumx: "ElectrumX", core_version: "Core version",
+};
+
+function renderHealth(health) {
+  if (!health) return;
+  const status = health.status || "unknown";
+  const scoreEl = document.getElementById("health-score");
+  scoreEl.textContent = health.score !== null && health.score !== undefined ? health.score : "-";
+  scoreEl.className = "health-score " + status;
+  const labelEl = document.getElementById("health-status-label");
+  labelEl.textContent = status.toUpperCase();
+  labelEl.className = "health-status-label " + status;
+
+  const container = document.getElementById("health-components");
+  const components = health.components || {};
+  const keys = Object.keys(components);
+  if (keys.length === 0) {
+    container.innerHTML = `<div style="color:var(--text-muted);font-size:13px;">${esc(health.reason) || "No component data yet"}</div>`;
+    return;
+  }
+  container.innerHTML = keys.map(key => {
+    const c = components[key];
+    const label = HEALTH_LABELS[key] || key;
+    return `<div class="health-component-row"><span class="k">${esc(label)}</span><span class="v ${c.status}">${esc(c.detail)}</span></div>`;
+  }).join("");
+}
+
+const SEVERITY_ICON = { info: "info", warning: "warning", critical: "critical" };
+
+async function refreshEvents() {
+  const severity = document.getElementById("event-severity").value;
+  try {
+    const qs = severity ? `?severity=${encodeURIComponent(severity)}&limit=50` : "?limit=50";
+    const resp = await fetch(`/api/events${qs}`, { cache: "no-store" });
+    const data = await resp.json();
+    const list = document.getElementById("event-list");
+    const events = data.events || [];
+    if (events.length === 0) {
+      list.innerHTML = `<div class="chart-empty">No events yet</div>`;
+      return;
+    }
+    list.innerHTML = events.map(e => {
+      const time = new Date(e.timestamp * 1000).toLocaleTimeString();
+      return `<div class="event-row">
+        <span class="event-time">${time}</span>
+        <span class="event-dot ${SEVERITY_ICON[e.severity] || "info"}"></span>
+        <span class="event-message">${esc(e.message)}</span>
+      </div>`;
+    }).join("");
+  } catch (e) { /* keep last-known list on transient failure */ }
+}
+document.getElementById("event-severity").addEventListener("change", refreshEvents);
+
+function renderPeerStats(stats) {
+  const el = document.getElementById("peer-stats-row");
+  if (!el) return;
+  if (!stats) { el.innerHTML = ""; return; }
+  el.innerHTML = `
+    <span><b>${stats.inbound}</b> inbound</span>
+    <span><b>${stats.outbound}</b> outbound</span>
+    <span><b>${stats.ipv4}</b> IPv4</span>
+    <span><b>${stats.ipv6}</b> IPv6</span>
+    <span><b>${stats.tor}</b> Tor</span>
+  `;
+}
+
+// --- lightweight canvas line chart, no external library ---
+function fmtChartTime(ts, spanSeconds) {
+  const d = new Date(ts * 1000);
+  if (spanSeconds > 36 * 3600) {
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+const CHART_VALUE_FORMATTERS = {
+  network_hashrate: v => fmtHashrate(v),
+  temperature_c: v => v.toFixed(1) + " °C",
+  disk_used_percent: v => v.toFixed(0) + "%",
+  memory_used_percent: v => v.toFixed(0) + "%",
+  swap_used_percent: v => v.toFixed(0) + "%",
+  rpc_latency_ms: v => v.toFixed(0) + " ms",
+};
+
+function fmtChartValue(metric, v) {
+  const formatter = CHART_VALUE_FORMATTERS[metric];
+  if (formatter) return formatter(v);
+  return v.toFixed(v % 1 === 0 ? 0 : 2);
+}
+
+function sizeCanvasToDisplay(canvas) {
+  // The canvas's drawing buffer (canvas.width/height) is independent of
+  // its CSS box size - if they don't match, the browser scales the
+  // bitmap non-natively, which is exactly what makes text look blurry
+  // and "stretched". Match the buffer to the real rendered pixel size
+  // (times devicePixelRatio, so it stays crisp on high-DPI screens too),
+  // and hand back logical (CSS-pixel) dimensions for drawing math.
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w, h };
+}
+
+function drawLineChart(canvas, points, metric) {
+  const ctx = canvas.getContext("2d");
+  const { w, h } = sizeCanvasToDisplay(canvas);
+  ctx.clearRect(0, 0, w, h);
+  if (!points || points.length < 2) return;
+
+  const values = points.map(p => p.value).filter(v => v !== null && v !== undefined);
+  if (values.length < 2) return;
+  const minV = Math.min(...values), maxV = Math.max(...values);
+  const range = maxV - minV || 1;
+
+  // Reserve real space for axis labels instead of drawing text on top of
+  // the plotted line - a legible chart needs a margin, not overlap. Wider
+  // than a bare number needs, since unit suffixes (GH/s, ms, %) take more
+  // room than plain digits.
+  const marginLeft = 72, marginRight = 10, marginTop = 12, marginBottom = 20;
+  const plotW = w - marginLeft - marginRight;
+  const plotH = h - marginTop - marginBottom;
+  const stepX = plotW / (points.length - 1);
+  const xAt = i => marginLeft + i * stepX;
+  const yAt = v => marginTop + plotH - ((v - minV) / range) * plotH;
+
+  const style = getComputedStyle(document.documentElement);
+  const textColor = style.getPropertyValue("--text").trim() || "#222";
+  const mutedColor = style.getPropertyValue("--text-muted").trim() || "#888";
+  const gridColor = style.getPropertyValue("--border").trim() || "#ddd";
+  const accentColor = style.getPropertyValue("--accent").trim() || "#f2621a";
+
+  // Gridlines + Y-axis labels (max at top, min at bottom).
+  ctx.strokeStyle = gridColor;
+  ctx.lineWidth = 1;
+  ctx.fillStyle = textColor;
+  ctx.font = "11px sans-serif";
+  ctx.textAlign = "right";
+  [maxV, minV].forEach(v => {
+    const y = yAt(v);
+    ctx.beginPath();
+    ctx.moveTo(marginLeft, y);
+    ctx.lineTo(w - marginRight, y);
+    ctx.stroke();
+    ctx.fillText(fmtChartValue(metric, v), marginLeft - 8, y + 4);
+  });
+
+  // Plotted line.
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    const x = xAt(i), y = yAt(p.value);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // X-axis labels: start and end of the visible time window.
+  const spanSeconds = points[points.length - 1].ts - points[0].ts;
+  ctx.fillStyle = mutedColor;
+  ctx.font = "10px sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(fmtChartTime(points[0].ts, spanSeconds), marginLeft, h - 4);
+  ctx.textAlign = "right";
+  ctx.fillText(fmtChartTime(points[points.length - 1].ts, spanSeconds), w - marginRight, h - 4);
+}
+
+let chartRefreshTimer = null;
+
+let lastChartPoints = null;
+let lastChartMetric = null;
+
+async function refreshChart() {
+  const metric = document.getElementById("chart-metric").value;
+  const range = document.getElementById("chart-range").value;
+  const canvas = document.getElementById("chart-canvas");
+  const emptyEl = document.getElementById("chart-empty");
+  try {
+    const resp = await fetch(`/api/history?metric=${encodeURIComponent(metric)}&range=${encodeURIComponent(range)}`, { cache: "no-store" });
+    const data = await resp.json();
+    const points = data.points || [];
+    if (points.length < 2) {
+      canvas.classList.add("hidden");
+      emptyEl.classList.remove("hidden");
+      lastChartPoints = null;
+      return;
+    }
+    canvas.classList.remove("hidden");
+    emptyEl.classList.add("hidden");
+    lastChartPoints = points;
+    lastChartMetric = metric;
+    drawLineChart(canvas, points, metric);
+  } catch (e) {
+    canvas.classList.add("hidden");
+    emptyEl.classList.remove("hidden");
+  }
+}
+document.getElementById("chart-metric").addEventListener("change", refreshChart);
+document.getElementById("chart-range").addEventListener("change", refreshChart);
+
+let resizeRedrawTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeRedrawTimer);
+  resizeRedrawTimer = setTimeout(() => {
+    if (lastChartPoints) drawLineChart(document.getElementById("chart-canvas"), lastChartPoints, lastChartMetric);
+  }, 150);
+});
+
+async function refreshDiskRunway() {
+  try {
+    const resp = await fetch(`/api/history?metric=disk_free_gb&range=7d`, { cache: "no-store" });
+    const data = await resp.json();
+    const points = data.points || [];
+    const growthEl = document.getElementById("disk-runway-growth");
+    const etaEl = document.getElementById("disk-runway-eta");
+    if (!growthEl || !etaEl) return;
+    if (points.length < 6) {
+      growthEl.textContent = "collecting data...";
+      etaEl.textContent = "collecting data...";
+      return;
+    }
+    const first = points[0], last = points[points.length - 1];
+    const spanHours = (last.ts - first.ts) / 3600;
+    if (spanHours < 2) {
+      growthEl.textContent = "collecting data...";
+      etaEl.textContent = "collecting data...";
+      return;
+    }
+    const deltaGb = first.value - last.value; // free space shrinking = positive growth
+    const perDay = (deltaGb / spanHours) * 24;
+    if (perDay <= 0.001) {
+      growthEl.textContent = "stable";
+      etaEl.textContent = "n/a";
+      return;
+    }
+    growthEl.textContent = `-${perDay.toFixed(2)} GB/day`;
+    const daysLeft = last.value / perDay;
+    etaEl.textContent = daysLeft > 3650 ? "> 10 years" : `~${Math.round(daysLeft)} days`;
+  } catch (e) { /* leave last-known values */ }
+}
+
 function renderRecentBlocks(blocks) {
   const tbody = document.getElementById("block-rows");
   if (!tbody) return;
@@ -971,7 +1378,7 @@ function renderRecentBlocks(blocks) {
     resetScrollX(tbody);
     return;
   }
-  tbody.innerHTML = blocks.map(b => `<tr class="block-row" data-hash="${b.hash}">
+  tbody.innerHTML = blocks.map(b => `<tr class="block-row" data-hash="${esc(b.hash)}">
     <td class="mono">${fmtInt(b.height)}</td>
     <td>${fmtAge(b.time)}</td>
     <td class="mono">${fmtInt(b.tx_count)}</td>
@@ -991,8 +1398,8 @@ function renderBannedPeers(banned) {
     return;
   }
   tbody.innerHTML = banned.map(b => `<tr>
-    <td class="mono">${b.address || "-"}${copyBtn(b.address)}</td>
-    <td>${b.ban_reason || "-"}</td>
+    <td class="mono">${esc(b.address) || "-"}${copyBtn(b.address)}</td>
+    <td>${esc(b.ban_reason) || "-"}</td>
     <td>${b.banned_until ? new Date(b.banned_until * 1000).toLocaleString() : "-"}</td>
   </tr>`).join("");
   resetScrollX(tbody);
@@ -1029,7 +1436,7 @@ function renderHost(host) {
   if (extraEl) {
     const disks = host.extra_disks || [];
     extraEl.innerHTML = disks.map(d => `
-      <div class="metric-row" style="margin-top:6px;"><span class="k">${d.label}</span> <span class="v mono">${d.free_gb} GB free / ${d.total_gb} GB</span></div>
+      <div class="metric-row" style="margin-top:6px;"><span class="k">${esc(d.label)}</span> <span class="v mono">${d.free_gb} GB free / ${d.total_gb} GB</span></div>
       <div class="bar-mini"><div class="${diskFillClass(d.used_percent)}" style="width:${d.used_percent || 0}%"></div></div>
     `).join("");
   }
@@ -1055,9 +1462,9 @@ function renderElectrumx(ex) {
       tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>no clients connected</td></tr>";
     } else {
       tbody.innerHTML = sessions.map(s => `<tr>
-        <td class="mono">${s.remote_address || "-"}${copyBtn(s.remote_address)}</td>
-        <td class="mono">${s.client || "-"}</td>
-        <td>${s.protocol_version || "-"}</td>
+        <td class="mono">${esc(s.remote_address) || "-"}${copyBtn(s.remote_address)}</td>
+        <td class="mono">${esc(s.client) || "-"}</td>
+        <td>${esc(s.protocol_version) || "-"}</td>
         <td>${fmtDuration(s.duration)}</td>
       </tr>`).join("");
     }
@@ -1120,6 +1527,8 @@ async function refresh() {
     renderBannedPeers(d.banned_peers);
     renderHost(d.host);
     renderElectrumx(d.electrumx);
+    renderHealth(d.health);
+    renderPeerStats(d.peer_stats);
     document.body.classList.add("loaded");
   } catch (e) {
     setPill("bad", "Unreachable");
@@ -1130,7 +1539,13 @@ async function refresh() {
 }
 
 refresh();
+refreshEvents();
+refreshChart();
+refreshDiskRunway();
 setInterval(refresh, 8000);
+setInterval(refreshEvents, 10000);
+setInterval(refreshChart, 30000);
+setInterval(refreshDiskRunway, 60000);
 </script>
 </body>
 </html>

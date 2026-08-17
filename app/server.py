@@ -19,25 +19,35 @@ from urllib.parse import parse_qs, urlsplit
 
 import collector
 import config
+import history as history_module
+import metrics as metrics_module
 import price as price_client
+import privacy
 import rpc
+import state as state_module
+
+APP_VERSION = "0.2.0"
 
 TXID_RE = re.compile(r"^/api/tx/([0-9a-fA-F]{64})$")
 BLOCK_RE = re.compile(r"^/api/block/([0-9a-fA-F]{64})$")
 HEX64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 STATIC_ASSET_RE = re.compile(r"^/static/([A-Za-z0-9_.-]+)$")
 
+MAX_EVENTS_RESPONSE = 500
+
 cfg = config.load()
+mon_state = state_module.MonitorState(cfg)
 
 _state_lock = threading.Lock()
 _state = {"error": "starting up", "price": None}
+_poll_thread = None
 
 
 def poll_loop():
     while True:
         started = time.time()
         try:
-            snapshot = collector.build_snapshot(cfg)
+            snapshot = collector.build_snapshot(cfg, mon_state)
         except Exception as exc:  # keep the poller alive no matter what
             snapshot = {"timestamp": time.time(), "errors": [f"collector: {exc}"]}
         with _state_lock:
@@ -60,8 +70,61 @@ def price_loop():
         time.sleep(cfg.price_poll_interval)
 
 
+def _diagnostics_snapshot():
+    """Sanitized bundle suitable for bug reports. Never includes RPC
+    credentials, webhook URLs, or any other secret - built from an
+    explicit whitelist rather than dumping config/state, so a future new
+    config field can never leak here by accident.
+    """
+    with _state_lock:
+        snap = dict(_state)
+
+    core_host = cfg.core_host
+    if cfg.privacy_mode:
+        core_host = privacy.mask_ip(core_host)
+
+    return {
+        "app_version": APP_VERSION,
+        "generated_at": time.time(),
+        "core_version": snap.get("core_version"),
+        "chain_status": snap.get("chain_status"),
+        "blockchain": {
+            k: (snap.get("blockchain") or {}).get(k)
+            for k in ("chain", "blocks", "headers", "verificationprogress", "difficulty")
+        } if snap.get("blockchain") else None,
+        "health": snap.get("health"),
+        "config_summary": {
+            "node_name": cfg.node_name,
+            "core_host": core_host,
+            "core_port": cfg.core_port,
+            "electrumx_mode": cfg.electrumx_mode,
+            "history_enabled": cfg.history_enabled,
+            "history_storage": cfg.history_storage,
+            "privacy_mode": cfg.privacy_mode,
+            "prometheus_enabled": cfg.prometheus_enabled,
+            "min_safe_core_version": cfg.min_safe_core_version or None,
+            "disk_warning_percent": cfg.disk_warning_percent,
+            "disk_critical_percent": cfg.disk_critical_percent,
+            "electrumx_warning_lag": cfg.electrumx_warning_lag,
+            "electrumx_critical_lag": cfg.electrumx_critical_lag,
+            "chain_stale_warning_seconds": cfg.chain_stale_warning_seconds,
+            "chain_stale_critical_seconds": cfg.chain_stale_critical_seconds,
+            "alert_webhook_configured": bool(cfg.alert_webhook_url),
+        },
+        "peer_stats": snap.get("peer_stats"),
+        "host": snap.get("host"),
+        "electrumx": {
+            "present": snap.get("electrumx") is not None,
+            "info_version": ((snap.get("electrumx") or {}).get("info") or {}).get("version"),
+            "client_count": len((snap.get("electrumx") or {}).get("sessions") or []) if snap.get("electrumx") else None,
+        } if cfg.electrumx_mode != "false" else None,
+        "recent_events": mon_state.event_log.recent(limit=50),
+        "errors": snap.get("errors"),
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ravencoin-node-monitor/1.0"
+    server_version = f"ravencoin-node-monitor/{APP_VERSION}"
 
     def log_message(self, fmt, *args):
         pass
@@ -70,6 +133,15 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_text(self, text, code=200, content_type="text/plain; charset=utf-8"):
+        body = text.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -84,6 +156,65 @@ class Handler(BaseHTTPRequestHandler):
             with _state_lock:
                 payload = dict(_state)
             self._send_json(payload)
+            return
+
+        if path == "/healthz":
+            alive = _poll_thread is not None and _poll_thread.is_alive()
+            self._send_json({"status": "ok" if alive else "down"}, code=200 if alive else 503)
+            return
+
+        if path == "/readyz":
+            with _state_lock:
+                ready = bool(_state.get("blockchain")) and not _state.get("starting_up")
+            self._send_json({"ready": ready}, code=200 if ready else 503)
+            return
+
+        if path == "/metrics":
+            if not cfg.prometheus_enabled:
+                self.send_response(404)
+                self.end_headers()
+                return
+            with _state_lock:
+                snap = dict(_state)
+            self._send_text(metrics_module.render(snap), content_type="text/plain; version=0.0.4; charset=utf-8")
+            return
+
+        if path in ("/api/health", "/api/health/"):
+            with _state_lock:
+                health = _state.get("health", {"score": None, "status": "unknown", "components": {}, "active_alerts": []})
+            self._send_json(health)
+            return
+
+        if path in ("/api/events", "/api/events/"):
+            severity = query.get("severity", [None])[0]
+            if severity not in (None, "info", "warning", "critical"):
+                self._send_json({"error": "severity must be info, warning, or critical"}, code=400)
+                return
+            try:
+                limit = min(MAX_EVENTS_RESPONSE, max(1, int(query.get("limit", ["100"])[0])))
+            except ValueError:
+                limit = 100
+            self._send_json({"events": mon_state.event_log.recent(limit=limit, min_severity=severity)})
+            return
+
+        if path in ("/api/history", "/api/history/"):
+            if mon_state.history is None:
+                self._send_json({"error": "history is disabled or unavailable", "points": []}, code=200)
+                return
+            metric = query.get("metric", [None])[0]
+            range_key = query.get("range", ["24h"])[0]
+            if metric not in history_module.METRICS:
+                self._send_json({"error": f"unknown metric, must be one of: {', '.join(history_module.METRICS)}"}, code=400)
+                return
+            if range_key not in history_module.RANGE_SECONDS:
+                self._send_json({"error": f"unknown range, must be one of: {', '.join(history_module.RANGE_SECONDS)}"}, code=400)
+                return
+            points = mon_state.history.query_metric(metric, range_key)
+            self._send_json({"metric": metric, "range": range_key, "points": points})
+            return
+
+        if path in ("/api/diagnostics", "/api/diagnostics/"):
+            self._send_json(_diagnostics_snapshot())
             return
 
         tx_match = TXID_RE.match(path)
@@ -156,10 +287,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    threading.Thread(target=poll_loop, daemon=True, name="poll").start()
+    global _poll_thread
+    _poll_thread = threading.Thread(target=poll_loop, daemon=True, name="poll")
+    _poll_thread.start()
     threading.Thread(target=price_loop, daemon=True, name="price").start()
     server = ThreadingHTTPServer((cfg.bind_host, cfg.bind_port), Handler)
-    print(f"ravencoin-node-monitor listening on {cfg.bind_host}:{cfg.bind_port}")
+    print(f"ravencoin-node-monitor {APP_VERSION} listening on {cfg.bind_host}:{cfg.bind_port}")
+    if cfg.history_enabled:
+        print(f"history: storage={cfg.history_storage} sample_interval={cfg.history_sample_interval}s retention={cfg.history_retention_hours}h")
     server.serve_forever()
 
 

@@ -6,6 +6,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # History is RAM-only by default (see README "History storage"), so
+    # the container needs no writable filesystem at all under default
+    # config - a read-only root is real, not cosmetic, hardening here.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     ports:
       # Bind to the LAN interface only. Do not publish this on 0.0.0.0
       # unless you put your own auth/reverse proxy in front of it - the
@@ -15,8 +25,15 @@ services:
     # specific Docker network (e.g. a docker-compose stack running Core):
     # networks:
     #   - ravencoin-backend
+    # Only needed if you opt into HISTORY_STORAGE=sqlite (persistent
+    # history - writes to flash on every sample, see README):
+    # volumes:
+    #   - history-data:/data
 
 # networks:
 #   ravencoin-backend:
 #     external: true
 #     name: <name-of-your-existing-network>
+
+# volumes:
+#   history-data:

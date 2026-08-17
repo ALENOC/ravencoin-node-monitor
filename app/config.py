@@ -83,6 +83,33 @@ class Config:
     # usage for (e.g. blockchain data on a separate drive from the OS).
     extra_disk_paths: str = ""
 
+    # --- history (RAM-only by default - see history.py's module docstring) ---
+    history_enabled: bool = True
+    history_storage: str = "memory"  # "memory" (default) or "sqlite" (opt-in, writes a file)
+    history_db_path: str = "/data/history.db"  # only used when history_storage="sqlite"
+    history_sample_interval: int = 60  # seconds between history samples (independent of poll_interval)
+    history_retention_hours: int = 168
+    history_max_samples: int = 20160  # hard per-metric cap, backstop under retention_hours
+    event_history_max: int = 2000
+
+    privacy_mode: bool = False
+    prometheus_enabled: bool = True
+
+    min_safe_core_version: str = ""  # e.g. "4.8.0" - empty disables the check
+
+    health_min_peers: int = 4
+    disk_warning_percent: int = 80
+    disk_critical_percent: int = 90
+    electrumx_warning_lag: int = 3
+    electrumx_critical_lag: int = 10
+    chain_stale_warning_seconds: int = 900
+    chain_stale_critical_seconds: int = 1800
+    rpc_latency_warning_ms: int = 2000
+
+    alert_webhook_url: str = ""
+    alert_min_severity: str = "warning"
+    alert_cooldown_seconds: int = 900
+
 
 def load() -> Config:
     ex_ssl_host = _env("ELECTRUMX_SSL_HOST", _env("ELECTRUMX_RPC_HOST", "127.0.0.1"))
@@ -113,4 +140,25 @@ def load() -> Config:
         price_feed_symbol=_env("PRICE_FEED_SYMBOL", "RVNUSDT"),
         price_poll_interval=_env_int("PRICE_POLL_INTERVAL", 300),
         extra_disk_paths=_env("EXTRA_DISK_PATHS", ""),
+        history_enabled=_env_bool("HISTORY_ENABLED", True),
+        history_storage=_env("HISTORY_STORAGE", "memory").strip().lower(),
+        history_db_path=_env("HISTORY_DB_PATH", "/data/history.db"),
+        history_sample_interval=_env_int("HISTORY_SAMPLE_INTERVAL", 60),
+        history_retention_hours=_env_int("HISTORY_RETENTION_HOURS", 168),
+        history_max_samples=_env_int("HISTORY_MAX_SAMPLES", 20160),
+        event_history_max=_env_int("EVENT_HISTORY_MAX", 2000),
+        privacy_mode=_env_bool("PRIVACY_MODE", False),
+        prometheus_enabled=_env_bool("PROMETHEUS_ENABLED", True),
+        min_safe_core_version=_env("MIN_SAFE_CORE_VERSION", ""),
+        health_min_peers=_env_int("HEALTH_MIN_PEERS", 4),
+        disk_warning_percent=_env_int("DISK_WARNING_PERCENT", 80),
+        disk_critical_percent=_env_int("DISK_CRITICAL_PERCENT", 90),
+        electrumx_warning_lag=_env_int("ELECTRUMX_WARNING_LAG", 3),
+        electrumx_critical_lag=_env_int("ELECTRUMX_CRITICAL_LAG", 10),
+        chain_stale_warning_seconds=_env_int("CHAIN_STALE_WARNING_SECONDS", 900),
+        chain_stale_critical_seconds=_env_int("CHAIN_STALE_CRITICAL_SECONDS", 1800),
+        rpc_latency_warning_ms=_env_int("RPC_LATENCY_WARNING_MS", 2000),
+        alert_webhook_url=_env("ALERT_WEBHOOK_URL", ""),
+        alert_min_severity=_env("ALERT_MIN_SEVERITY", "warning").strip().lower(),
+        alert_cooldown_seconds=_env_int("ALERT_COOLDOWN_SECONDS", 900),
     )
