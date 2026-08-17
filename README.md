@@ -1,4 +1,4 @@
-# ravencoin-node-monitor
+# Ravencoin Node Monitor
 
 A lightweight Ravencoin Core node health, security, and diagnostics
 monitor, optionally paired with ElectrumX. One adaptive UI: it shows
@@ -36,8 +36,11 @@ Docker image that runs on anything from a Raspberry Pi to a VPS.
 **Health, diagnostics & operations**
 - A deterministic Node Health score (0-100) derived from chain state, RPC
   reachability, peer count, disk usage, mempool, and ElectrumX lag
-- Chain integrity monitor: stale-tip detection, reorg detection, headers
-  vs. validated-blocks lag, alternate chain tips (`getchaintips`)
+- Chain integrity monitor: stale-tip detection, reorg detection (a reorg
+  is the network settling on a different, longer chain than the one your
+  node had already accepted - it happens occasionally and isn't
+  necessarily a problem), headers-vs-validated-blocks lag, alternate
+  chain tips (`getchaintips`)
 - Core version safety check against an optional configured minimum,
   entirely offline - no internet access is ever made mandatory
 - An internal event system (new block, Core down/recovered, reorg, disk
@@ -48,15 +51,19 @@ Docker image that runs on anything from a Raspberry Pi to a VPS.
   built-in charts (no charting library) and a disk-usage growth/runway
   estimate
 - Peer intelligence: inbound/outbound, IPv4/IPv6/Tor counts, subversion
-  distribution - no external GeoIP lookups
+  distribution (the client name/version string each peer reports, e.g.
+  `/Ravencoin:4.8.0/`) - no external GeoIP lookups (nothing looks up a
+  peer's IP against a geographic-location database)
 - Richer Ravencoin asset classification: issuance, reissue, transfer,
   qualifier, sub-qualifier, restricted, unique, and ownership-token assets
   distinguished where Core's own RPC output makes it possible to do so
   reliably (reported as `unknown` rather than guessed otherwise)
 - Optional generic webhook alerting on event state transitions, with a
   cooldown so a flapping condition can't spam it
-- `/healthz`, `/readyz`, and an optional `/metrics` (Prometheus text
-  format, hand-rolled - no client library) for external monitoring
+- `/healthz`, `/readyz`, and an optional `/metrics` for external
+  monitoring - `/metrics` is Prometheus text format (a plain-text metrics
+  format read by monitoring tools like Prometheus/Grafana), hand-rolled
+  here with no client library dependency
 - Optional `PRIVACY_MODE` masks IP addresses server-side, before they ever
   reach the browser
 - A sanitized `/api/diagnostics` export for bug reports - never includes
@@ -108,10 +115,17 @@ generates), that line does **not** contain a usable password - use the
 plaintext password you originally typed into that script when you
 generated it, together with the username from the same line.
 
-Also check `CORE_RPC_HOST`: leave it as `127.0.0.1` only if Core runs on
-the same machine outside Docker, or on the same Docker network with that
-exact hostname. If Core runs on a different machine, put its LAN IP or
-hostname there instead (e.g. `192.168.1.50`).
+Also check `CORE_RPC_HOST`. The monitor itself runs inside this Docker
+container, so `127.0.0.1` there means the container's own loopback, not
+the host machine - leave it as `127.0.0.1` **only** if Core also runs
+inside a container sharing that exact same network stack as the monitor
+(an advanced setup, not this default one). For the common case of Core
+running directly on the same physical machine outside Docker (e.g.
+installed as a regular service on the same Raspberry Pi), treat it the
+same as a different machine: put that machine's own LAN IP here instead
+(e.g. `192.168.1.50`, the same address you'll browse to in step 5). If
+Core genuinely runs on a different machine, likewise use its LAN IP or
+hostname.
 
 **4. Start it, and confirm it's actually up before moving on:**
 
@@ -143,8 +157,14 @@ for that).
 look for an RPC authentication error - it almost always means
 `CORE_RPC_USER`/`CORE_RPC_PASSWORD` don't match `raven.conf`, or
 `CORE_RPC_HOST` can't reach Core from inside the container. Also confirm
-Core's `raven.conf` has `server=1` and, if the monitor and Core are on
-different machines, an `rpcallowip=` entry covering the monitor's address.
+Core's `raven.conf` has `server=1` and an `rpcallowip=` entry covering
+the monitor's address - this is needed any time `CORE_RPC_HOST` isn't
+`127.0.0.1`, which includes Core running on the very same machine as the
+monitor's Docker container (from Core's point of view, that container is
+an outside address, not "itself"). If Core still refuses the connection
+after adding `rpcallowip=`, also add `rpcbind=0.0.0.0` to `raven.conf`
+and restart Core, so it actually listens on more than just its own
+loopback address.
 
 ## Configuration
 
@@ -158,7 +178,8 @@ full list with defaults. Highlights:
 | `CORE_RPC_USER_FILE` / `CORE_RPC_PASSWORD_FILE` | Read credentials from a file instead (Docker secrets, mounted files) |
 | `ELECTRUMX_ENABLED` | `auto` (default, silent probe), `true`, or `false` |
 | `ELECTRUMX_RPC_HOST` / `_PORT` | ElectrumX's admin RPC (`rpc://`), default port 8000 |
-| `ELECTRUMX_SSL_HOST` / `_PORT` / `_SNI` | ElectrumX's public `ssl://` port, used read-only for backend sync info |
+| `ELECTRUMX_SSL_HOST` / `_PORT` | ElectrumX's public `ssl://` port, used read-only for backend sync info |
+| `ELECTRUMX_SSL_SNI` | Only needed if the TLS certificate's SNI hostname (the hostname a TLS client announces before the server picks which certificate to present) differs from `ELECTRUMX_SSL_HOST` - rarely needed |
 | `PRICE_FEED_ENABLED` | Off by default; set `true` to poll Binance for RVN/USDT |
 | `EXTRA_DISK_PATHS` | `Label=/path,Label2=/path2` - report disk usage for extra mounted volumes beyond `/` |
 | `HISTORY_ENABLED` / `HISTORY_STORAGE` | History on by default, RAM-only (`memory`) by default - see "History storage" |
@@ -228,8 +249,8 @@ file, run the monitor with `network_mode: "container:<electrumx-container-name>"
 (see `docker-compose.electrumx.example.yml`) - `127.0.0.1:8000` inside the
 monitor then reaches ElectrumX's admin RPC directly. Note this also means
 the monitor's own HTTP port can only be published by adding it to the
-ElectrumX service's own `ports:` list, since a container sharing another's
-netns can't publish ports independently.
+ElectrumX service's own `ports:` list, since a container sharing another
+container's network namespace can't publish ports independently.
 
 **3. Loosen the bind on purpose.** If you control the ElectrumX deployment
 and are fine with it, changing `rpc://127.0.0.1:8000` to `rpc://0.0.0.0:8000`
@@ -247,7 +268,8 @@ Each mempool transaction is looked up via `getrawtransaction` (batched into
 a single JSON-RPC call) and marked `RVN` or `ASSET: <name>` based on
 whether any output carries an asset transfer. This only sees transactions
 currently in Core's own mempool - it is not a general asset explorer, and
-it does not require `txindex=1`.
+it does not require `txindex=1` (Core's optional, disk-heavy full
+historical-transaction index).
 
 ## Transaction and block detail
 
@@ -286,6 +308,12 @@ an arbitrary UI-only calculation:
 | Disk | usage > `DISK_WARNING_PERCENT` (worst of root + any extra disk) | usage > `DISK_CRITICAL_PERCENT` |
 | ElectrumX | lag >= `ELECTRUMX_WARNING_LAG` blocks, or unreachable while `ELECTRUMX_ENABLED=true` | lag >= `ELECTRUMX_CRITICAL_LAG` blocks |
 | Mempool | data partially unavailable | - (informational only) |
+
+The chain's "tip" is the most recent block your node has fully accepted.
+Core first downloads lightweight block headers, then validates the full
+blocks behind them; headers running ahead of validated blocks is normal
+during the initial sync right after installing Core, but afterwards it
+signals validation is falling behind.
 
 A reorg is reported as a transient warning on the chain component and as
 a `reorg_detected` event, never silently absorbed into the score. Core's
@@ -416,7 +444,17 @@ rebuilt from it, never hand-patched and left that way.
 
 ## Running without Docker
 
+Configuration comes only from real environment variables - there's no
+built-in `.env` file parser; when running via `docker compose`, Compose's
+own `env_file:` setting is what loads `.env` for you. Running the server
+directly means you have to load it into the shell yourself first. From
+the repository root, with a `.env` file already created (see Quick start
+step 3):
+
 ```bash
+set -a
+source .env
+set +a
 cd app
 python3 server.py
 ```
