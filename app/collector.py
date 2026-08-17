@@ -116,6 +116,53 @@ def _collect_core(cfg, errors):
     }
 
 
+def get_tx_detail(cfg, txid):
+    """Full structured detail for one transaction, fetched on demand (not
+    part of the periodic snapshot - keeps /api/status small even with a
+    large mempool). Input amounts aren't resolved (that needs one RPC call
+    per input to look up the spent output) - only what's directly on the
+    raw transaction is shown.
+    """
+    tx = rpc.call(cfg, "getrawtransaction", [txid, True])
+
+    outputs = []
+    total_rvn = 0.0
+    for vout in tx.get("vout", []):
+        script = vout.get("scriptPubKey") or {}
+        asset = script.get("asset")
+        value = vout.get("value")
+        if value is not None and asset is None:
+            total_rvn += value
+        outputs.append(
+            {
+                "n": vout.get("n"),
+                "value": value,
+                "addresses": script.get("addresses") or ([script["address"]] if script.get("address") else []),
+                "type": script.get("type"),
+                "asset": {"name": asset.get("name"), "amount": asset.get("amount")} if asset else None,
+            }
+        )
+
+    inputs = [
+        {"txid": vin.get("txid"), "vout": vin.get("vout"), "coinbase": "coinbase" in vin}
+        for vin in tx.get("vin", [])
+    ]
+
+    return {
+        "txid": tx.get("txid"),
+        "size": tx.get("size"),
+        "vsize": tx.get("vsize"),
+        "version": tx.get("version"),
+        "locktime": tx.get("locktime"),
+        "confirmations": tx.get("confirmations"),
+        "blockhash": tx.get("blockhash"),
+        "time": tx.get("time"),
+        "total_output_rvn": round(total_rvn, 8),
+        "inputs": inputs,
+        "outputs": outputs,
+    }
+
+
 def _collect_electrumx(cfg):
     if cfg.ex_admin_source == "file":
         info, sessions = electrumx_client.read_admin_snapshot(cfg.ex_admin_file, cfg.ex_admin_max_age)

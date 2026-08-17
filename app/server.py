@@ -9,6 +9,7 @@ or front it with your own reverse proxy / firewall rule. See README.md.
 """
 
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,6 +17,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import collector
 import config
 import price as price_client
+import rpc
+
+TXID_RE = re.compile(r"^/api/tx/([0-9a-fA-F]{64})$")
 
 cfg = config.load()
 
@@ -71,6 +75,17 @@ class Handler(BaseHTTPRequestHandler):
                 payload = dict(_state)
             self._send_json(payload)
             return
+        tx_match = TXID_RE.match(self.path)
+        if tx_match:
+            txid = tx_match.group(1)
+            try:
+                detail = collector.get_tx_detail(cfg, txid)
+            except rpc.RpcError as exc:
+                self._send_json({"error": f"transaction not found or no longer in the mempool: {exc}"}, code=404)
+                return
+            self._send_json(detail)
+            return
+
         if self.path in ("/", "/index.html"):
             try:
                 with open(config.INDEX_HTML_PATH, "rb") as f:

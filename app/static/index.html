@@ -202,6 +202,22 @@
   }
   table.peer-table tbody tr:last-child td { border-bottom: none; }
   table.peer-table tbody tr:hover { background: var(--bg); }
+  tr.tx-row { cursor: pointer; }
+  tr.tx-detail-row td {
+    background: var(--bg);
+    padding: 12px 16px;
+    white-space: normal;
+  }
+  .tx-detail-meta { display: flex; flex-wrap: wrap; gap: 14px 24px; font-size: 12.5px; color: var(--text-muted); margin-bottom: 10px; }
+  .tx-detail-meta b { color: var(--text); font-weight: 600; }
+  table.tx-output-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.tx-output-table th {
+    text-align: left; padding: 5px 8px; color: var(--text-muted);
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em;
+    border-bottom: 1px solid var(--border);
+  }
+  table.tx-output-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  table.tx-output-table tr:last-child td { border-bottom: none; }
   .dir-badge, .kind-badge { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
   .dir-badge.in { background: var(--good-soft); color: var(--good); }
   .dir-badge.out { background: var(--accent-soft); color: var(--accent); }
@@ -449,7 +465,7 @@ function renderMempoolTxs(txs) {
       kindBadge = `<span class="kind-badge rvn">RVN</span>`;
     }
     const fee = tx.fee !== null && tx.fee !== undefined ? tx.fee.toFixed(8) + " RVN" : "-";
-    return `<tr>
+    return `<tr class="tx-row" data-txid="${tx.txid}">
       <td class="mono">${shortId}</td>
       <td>${kindBadge}</td>
       <td>${fmtBytes(tx.size)}</td>
@@ -459,6 +475,64 @@ function renderMempoolTxs(txs) {
     </tr>`;
   }).join("");
 }
+
+function renderTxOutputs(outputs) {
+  if (!outputs || outputs.length === 0) return "<div style='color:var(--text-muted);font-size:12.5px;'>no outputs</div>";
+  const rows = outputs.map(o => {
+    const addr = (o.addresses && o.addresses.length) ? o.addresses.join(", ") : "-";
+    const amount = o.asset
+      ? `<span class="kind-badge asset">ASSET: ${o.asset.name}</span> ${o.asset.amount ?? "-"}`
+      : `<span class="kind-badge rvn">RVN</span> ${o.value !== null && o.value !== undefined ? o.value.toFixed(8) : "-"}`;
+    return `<tr><td>${o.n}</td><td class="mono">${addr}</td><td>${o.type || "-"}</td><td class="mono">${amount}</td></tr>`;
+  }).join("");
+  return `<table class="tx-output-table">
+    <thead><tr><th>#</th><th>Address</th><th>Type</th><th>Amount</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function toggleTxDetail(row) {
+  const txid = row.dataset.txid;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("tx-detail-row")) {
+    next.remove();
+    return;
+  }
+  document.querySelectorAll(".tx-detail-row").forEach(el => el.remove());
+
+  const detailRow = document.createElement("tr");
+  detailRow.className = "tx-detail-row";
+  detailRow.innerHTML = `<td colspan="6">Loading...</td>`;
+  row.after(detailRow);
+
+  try {
+    const resp = await fetch(`/api/tx/${txid}`, { cache: "no-store" });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      detailRow.innerHTML = `<td colspan="6" style="color:var(--bad);">${err.error || "transaction not found"}</td>`;
+      return;
+    }
+    const tx = await resp.json();
+    detailRow.innerHTML = `<td colspan="6">
+      <div class="tx-detail-meta">
+        <span><b>Size</b> ${fmtBytes(tx.size)}</span>
+        <span><b>Version</b> ${tx.version ?? "-"}</span>
+        <span><b>Locktime</b> ${tx.locktime ?? "-"}</span>
+        <span><b>Inputs</b> ${(tx.inputs || []).length}</span>
+        <span><b>Total output</b> ${tx.total_output_rvn ?? "-"} RVN</span>
+        <span><b>Confirmations</b> ${tx.confirmations ?? 0}</span>
+      </div>
+      ${renderTxOutputs(tx.outputs)}
+    </td>`;
+  } catch (e) {
+    detailRow.innerHTML = `<td colspan="6" style="color:var(--bad);">Could not load transaction: ${e}</td>`;
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const row = e.target.closest("tr.tx-row");
+  if (row) toggleTxDetail(row);
+});
 
 function renderPeers(peers) {
   const tbody = document.getElementById("peer-rows");
