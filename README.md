@@ -8,6 +8,12 @@ server / connected-client cards when ElectrumX is reachable.
 Stdlib-only Python (no pip dependencies), a single static HTML page, and a
 Docker image that runs on anything from a Raspberry Pi to a VPS.
 
+## Screenshots
+
+![Node health, sync status, and price/hashrate history](pictures/screenshot.png)
+
+![Mempool, peers, event timeline, and host resources](pictures/screenshot_2.png)
+
 ## Features
 
 **Monitoring**
