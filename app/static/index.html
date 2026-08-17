@@ -98,6 +98,27 @@
     display: none;
   }
   .error-banner.show { display: block; }
+  .startup-banner {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-size: 13.5px;
+    margin-bottom: 16px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+  }
+  .startup-banner.show { display: flex; }
+  .startup-spinner {
+    width: 18px; height: 18px; flex-shrink: 0;
+    border-radius: 50%;
+    border: 2.5px solid currentColor;
+    border-top-color: transparent;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .startup-banner b { display: block; margin-bottom: 2px; }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -235,6 +256,14 @@
     </div>
     <div id="overall-pill" class="status-pill"><span class="dot"></span><span id="overall-text">Connecting...</span></div>
   </header>
+
+  <div id="startup-banner" class="startup-banner">
+    <div class="startup-spinner"></div>
+    <div>
+      <b>Node is starting up</b>
+      <span id="startup-message">Loading block index, this can take a few minutes on a large chain. Data will appear automatically once ready.</span>
+    </div>
+  </div>
 
   <div id="error-banner" class="error-banner"></div>
 
@@ -630,12 +659,22 @@ async function refresh() {
     setText("mode-sub", (d.mode === "electrumx" ? "Ravencoin Core + ElectrumX" : "Ravencoin Core (standalone)") + " · local network only");
     setText("last-updated", d.timestamp ? new Date(d.timestamp * 1000).toLocaleTimeString() : "-");
 
+    const startupBanner = document.getElementById("startup-banner");
     const errBanner = document.getElementById("error-banner");
-    if (d.errors && d.errors.length > 0) {
+    if (d.starting_up) {
+      startupBanner.classList.add("show");
+      if (d.startup_message) {
+        setText("startup-message", d.startup_message.charAt(0).toUpperCase() + d.startup_message.slice(1) + " - this can take a few minutes on a large chain. Data will appear automatically once ready.");
+      }
+      errBanner.classList.remove("show");
+      setPill("warn", "Starting up");
+    } else if (d.errors && d.errors.length > 0) {
+      startupBanner.classList.remove("show");
       errBanner.textContent = "Some data could not be fetched: " + d.errors.join(" | ");
       errBanner.classList.add("show");
       setPill("warn", "Partial data");
     } else {
+      startupBanner.classList.remove("show");
       errBanner.classList.remove("show");
       setPill("good", "Online");
     }

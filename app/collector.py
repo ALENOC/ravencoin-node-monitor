@@ -41,6 +41,21 @@ def _collect_core(cfg, errors):
     blockchain = None
     try:
         blockchain = rpc.call(cfg, "getblockchaininfo")
+    except rpc.RpcWarmupError as exc:
+        # Core is still loading the block index / verifying blocks after a
+        # (re)start. Every other RPC call would fail the same way right
+        # now, so stop here instead of making six more doomed calls.
+        return {
+            "starting_up": True,
+            "startup_message": str(exc),
+            "blockchain": None,
+            "network": None,
+            "network_hashrate": None,
+            "mempool": None,
+            "mempool_txs": None,
+            "peers": None,
+            "uptime_seconds": None,
+        }
     except rpc.RpcError as exc:
         errors.append(f"getblockchaininfo: {exc}")
 
@@ -106,6 +121,8 @@ def _collect_core(cfg, errors):
         errors.append(f"getnetworkhashps: {exc}")
 
     return {
+        "starting_up": False,
+        "startup_message": None,
         "blockchain": blockchain,
         "network": network,
         "network_hashrate": network_hashrate,
@@ -182,9 +199,10 @@ def _collect_electrumx(cfg):
 def build_snapshot(cfg):
     errors = []
     core = _collect_core(cfg, errors)
+    starting_up = core.get("starting_up", False)
 
     electrumx_data = None
-    if cfg.electrumx_mode != "false":
+    if cfg.electrumx_mode != "false" and not starting_up:
         try:
             electrumx_data = _collect_electrumx(cfg)
         except (OSError, RuntimeError, ValueError) as exc:

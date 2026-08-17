@@ -14,6 +14,13 @@ class RpcError(Exception):
     pass
 
 
+class RpcWarmupError(RpcError):
+    """Core's RPC_IN_WARMUP (-28): still loading the block index, verifying
+    blocks, rescanning, etc right after startup. Expected and transient,
+    not a real failure - callers treat it differently from other errors.
+    """
+
+
 def _post(cfg, payload):
     url = f"http://{cfg.core_host}:{cfg.core_port}/"
     data = json.dumps(payload).encode()
@@ -33,13 +40,20 @@ def _post(cfg, payload):
             raise RpcError(f"HTTP {exc.code}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
         raise RpcError(str(exc.reason)) from exc
+    except OSError as exc:
+        # Catches bare socket timeouts/connection errors that urlopen can
+        # raise without wrapping in URLError, depending on Python version.
+        raise RpcError(str(exc)) from exc
 
 
 def call(cfg, method, params=None):
     payload = {"jsonrpc": "1.0", "id": "rncm", "method": method, "params": params or []}
     result = _post(cfg, payload)
-    if result.get("error"):
-        raise RpcError(str(result["error"]))
+    error = result.get("error")
+    if error:
+        if isinstance(error, dict) and error.get("code") == -28:
+            raise RpcWarmupError(error.get("message") or "node is starting up")
+        raise RpcError(str(error))
     return result.get("result")
 
 
