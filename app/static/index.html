@@ -232,6 +232,8 @@
     margin-top: 8px;
   }
   .bar-mini > div { height: 100%; background: var(--accent); }
+  .bar-mini > div.warn { background: var(--warn); }
+  .bar-mini > div.bad { background: var(--bad); }
   .checklist { display: flex; flex-direction: column; gap: 8px; }
   .check-item { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
   .check-item .icon {
@@ -519,7 +521,11 @@
       <div class="metric-row" style="margin-top:2px;"><span class="k">Memory</span><span class="v mono" id="host-mem">-</span></div>
       <div class="bar-mini"><div id="mem-bar" style="width:0%"></div></div>
       <div class="metric-row" style="margin-top:6px;"><span class="k">Swap</span><span class="v mono" id="host-swap">-</span></div>
-      <div class="metric-row" style="margin-top:6px;"><span class="k">Disk 1</span><span class="v mono" id="host-disk">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Storage</h2>
+      <div class="metric-row"><span class="k">Disk 1</span><span class="v mono" id="host-disk">-</span></div>
       <div class="bar-mini"><div id="disk-bar" style="width:0%"></div></div>
       <div id="extra-disks"></div>
     </div>
@@ -992,6 +998,12 @@ function renderBannedPeers(banned) {
   resetScrollX(tbody);
 }
 
+function diskFillClass(usedPercent) {
+  if (usedPercent >= 95) return "bad";
+  if (usedPercent >= 85) return "warn";
+  return "";
+}
+
 function renderHost(host) {
   if (!host) return;
   if (host.load) setText("host-load", `${host.load["1m"]} / ${host.load["5m"]} / ${host.load["15m"]}`);
@@ -1010,6 +1022,7 @@ function renderHost(host) {
   if (host.disk && host.disk.total_gb) {
     setText("host-disk", `${host.disk.free_gb} GB free / ${host.disk.total_gb} GB`);
     if (diskBar) diskBar.style.width = (host.disk.used_percent || 0) + "%";
+    if (diskBar) diskBar.className = diskFillClass(host.disk.used_percent);
   }
 
   const extraEl = document.getElementById("extra-disks");
@@ -1017,7 +1030,7 @@ function renderHost(host) {
     const disks = host.extra_disks || [];
     extraEl.innerHTML = disks.map(d => `
       <div class="metric-row" style="margin-top:6px;"><span class="k">${d.label}</span> <span class="v mono">${d.free_gb} GB free / ${d.total_gb} GB</span></div>
-      <div class="bar-mini"><div style="width:${d.used_percent || 0}%"></div></div>
+      <div class="bar-mini"><div class="${diskFillClass(d.used_percent)}" style="width:${d.used_percent || 0}%"></div></div>
     `).join("");
   }
 }
