@@ -37,6 +37,43 @@ def _classify_mempool_txs(cfg, items, errors):
         item["asset_name"] = asset_name
 
 
+RECENT_BLOCKS_COUNT = 8
+
+
+def _get_recent_blocks(cfg, tip_height, errors):
+    if tip_height is None:
+        return None
+    heights = list(range(tip_height, max(tip_height - RECENT_BLOCKS_COUNT, -1), -1))
+    try:
+        hash_results = rpc.call_batch(cfg, [("getblockhash", [h]) for h in heights])
+    except rpc.RpcError as exc:
+        errors.append(f"getblockhash (batch): {exc}")
+        return None
+    hashes = [h for h, err in hash_results if not err and h]
+    if not hashes:
+        return None
+    try:
+        block_results = rpc.call_batch(cfg, [("getblock", [h, 1]) for h in hashes])
+    except rpc.RpcError as exc:
+        errors.append(f"getblock (batch): {exc}")
+        return None
+    blocks = []
+    for block, err in block_results:
+        if err or block is None:
+            continue
+        blocks.append(
+            {
+                "height": block.get("height"),
+                "hash": block.get("hash"),
+                "time": block.get("time"),
+                "size": block.get("size"),
+                "tx_count": len(block.get("tx") or []),
+                "difficulty": block.get("difficulty"),
+            }
+        )
+    return blocks
+
+
 def _collect_core(cfg, errors):
     blockchain = None
     try:
@@ -54,6 +91,8 @@ def _collect_core(cfg, errors):
             "mempool": None,
             "mempool_txs": None,
             "peers": None,
+            "banned_peers": None,
+            "recent_blocks": None,
             "uptime_seconds": None,
         }
     except rpc.RpcError as exc:
@@ -108,6 +147,21 @@ def _collect_core(cfg, errors):
     except rpc.RpcError as exc:
         errors.append(f"getpeerinfo: {exc}")
 
+    banned_peers = None
+    try:
+        raw_banned = rpc.call(cfg, "listbanned")
+        banned_peers = [
+            {
+                "address": b.get("address"),
+                "banned_until": b.get("banned_until"),
+                "ban_created": b.get("ban_created"),
+                "ban_reason": b.get("ban_reason"),
+            }
+            for b in raw_banned
+        ]
+    except rpc.RpcError as exc:
+        errors.append(f"listbanned: {exc}")
+
     uptime_seconds = None
     try:
         uptime_seconds = rpc.call(cfg, "uptime")
@@ -120,6 +174,8 @@ def _collect_core(cfg, errors):
     except rpc.RpcError as exc:
         errors.append(f"getnetworkhashps: {exc}")
 
+    recent_blocks = _get_recent_blocks(cfg, blockchain.get("blocks") if blockchain else None, errors)
+
     return {
         "starting_up": False,
         "startup_message": None,
@@ -129,6 +185,8 @@ def _collect_core(cfg, errors):
         "mempool": mempool,
         "mempool_txs": mempool_txs,
         "peers": peers,
+        "banned_peers": banned_peers,
+        "recent_blocks": recent_blocks,
         "uptime_seconds": uptime_seconds,
     }
 

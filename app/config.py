@@ -4,7 +4,7 @@ same image works for any deployment.
 """
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 INDEX_HTML_PATH = os.path.join(STATIC_DIR, "index.html")

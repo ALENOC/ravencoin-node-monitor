@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ravencoin Node Monitor</title>
 <link rel="icon" type="image/png" href="/static/raven-icon.png">
+<link rel="apple-touch-icon" href="/static/raven-icon-256.png">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#f2621a">
 <style>
   :root {
     --bg: #f4f5f7;
@@ -458,6 +461,26 @@
     </div>
 
     <div class="card">
+      <h2>Recent blocks</h2>
+      <div class="peer-scroll">
+        <table class="peer-table">
+          <thead><tr><th>Height</th><th>Age</th><th>Txs</th><th>Size</th></tr></thead>
+          <tbody id="block-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Banned peers <span class="peer-count-tag" id="banned-count"></span></h2>
+      <div class="peer-scroll">
+        <table class="peer-table">
+          <thead><tr><th>Address</th><th>Reason</th><th>Expires</th></tr></thead>
+          <tbody id="banned-rows"><tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Host resources</h2>
       <div class="metric-row"><span class="k">Load (1/5/15m)</span><span class="v mono" id="host-load">-</span></div>
       <div class="metric-row"><span class="k">CPU temp</span><span class="v mono" id="host-temp">-</span></div>
@@ -856,6 +879,37 @@ document.getElementById("peer-search").addEventListener("input", (e) => {
 });
 wireSortableHeaders("peer-table", peerSort, applyPeerView);
 
+function renderRecentBlocks(blocks) {
+  const tbody = document.getElementById("block-rows");
+  if (!tbody) return;
+  if (!blocks || blocks.length === 0) {
+    tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>no data</td></tr>";
+    return;
+  }
+  tbody.innerHTML = blocks.map(b => `<tr>
+    <td class="mono">${fmtInt(b.height)}</td>
+    <td>${fmtAge(b.time)}</td>
+    <td class="mono">${fmtInt(b.tx_count)}</td>
+    <td>${fmtBytes(b.size)}</td>
+  </tr>`).join("");
+}
+
+function renderBannedPeers(banned) {
+  const tbody = document.getElementById("banned-rows");
+  const countTag = document.getElementById("banned-count");
+  if (!tbody) return;
+  if (countTag) countTag.textContent = banned ? banned.length : "";
+  if (!banned || banned.length === 0) {
+    tbody.innerHTML = "<tr><td colspan='3' style='text-align:center;color:var(--text-muted);padding:16px;'>none</td></tr>";
+    return;
+  }
+  tbody.innerHTML = banned.map(b => `<tr>
+    <td class="mono">${b.address || "-"}${copyBtn(b.address)}</td>
+    <td>${b.ban_reason || "-"}</td>
+    <td>${b.banned_until ? new Date(b.banned_until * 1000).toLocaleString() : "-"}</td>
+  </tr>`).join("");
+}
+
 function renderHost(host) {
   if (!host) return;
   if (host.load) setText("host-load", `${host.load["1m"]} / ${host.load["5m"]} / ${host.load["15m"]}`);
@@ -880,7 +934,7 @@ function renderHost(host) {
   if (extraEl) {
     const disks = host.extra_disks || [];
     extraEl.innerHTML = disks.map(d => `
-      <div class="metric-row" style="margin-top:6px;"><span class="k">${d.label}</span><span class="v mono">${d.free_gb} GB free / ${d.total_gb} GB</span></div>
+      <div class="metric-row" style="margin-top:6px;"><span class="k">${d.label}</span> <span class="v mono">${d.free_gb} GB free / ${d.total_gb} GB</span></div>
       <div class="bar-mini"><div style="width:${d.used_percent || 0}%"></div></div>
     `).join("");
   }
@@ -966,6 +1020,8 @@ async function refresh() {
     applyMempoolView();
     peersRaw = d.peers || [];
     applyPeerView();
+    renderRecentBlocks(d.recent_blocks);
+    renderBannedPeers(d.banned_peers);
     renderHost(d.host);
     renderElectrumx(d.electrumx);
     document.body.classList.add("loaded");

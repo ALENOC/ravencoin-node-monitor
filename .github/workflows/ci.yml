@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check (all Python files, stdlib only)
+        run: python -m py_compile app/*.py contrib/*.py
+      - name: Static error check (undefined names, syntax errors)
+        run: |
+          pip install ruff
+          ruff check --select E9,F app contrib
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t ravencoin-node-monitor:ci .
+      - name: Smoke test (starts, serves the dashboard page)
+        run: |
+          docker run -d --name ci-smoketest -p 18899:8899 \
+            -e CORE_RPC_HOST=127.0.0.1 -e CORE_RPC_PORT=1 -e ELECTRUMX_ENABLED=false \
+            ravencoin-node-monitor:ci
+          sleep 3
+          curl -sf -o /dev/null http://127.0.0.1:18899/
+          curl -sf -o /dev/null http://127.0.0.1:18899/api/status
+          docker logs ci-smoketest
+          docker rm -f ci-smoketest
