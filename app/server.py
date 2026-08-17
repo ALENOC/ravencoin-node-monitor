@@ -9,6 +9,8 @@ or front it with your own reverse proxy / firewall rule. See README.md.
 """
 
 import json
+import mimetypes
+import os
 import re
 import threading
 import time
@@ -20,6 +22,7 @@ import price as price_client
 import rpc
 
 TXID_RE = re.compile(r"^/api/tx/([0-9a-fA-F]{64})$")
+STATIC_ASSET_RE = re.compile(r"^/static/([A-Za-z0-9_.-]+)$")
 
 cfg = config.load()
 
@@ -84,6 +87,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"transaction not found or no longer in the mempool: {exc}"}, code=404)
                 return
             self._send_json(detail)
+            return
+
+        if self.path == "/favicon.ico":
+            self.path = "/static/raven-icon.png"
+
+        asset_match = STATIC_ASSET_RE.match(self.path)
+        if asset_match:
+            file_path = os.path.join(config.STATIC_DIR, asset_match.group(1))
+            # the regex already forbids "/" and "..", but confirm containment too
+            if not os.path.abspath(file_path).startswith(os.path.abspath(config.STATIC_DIR) + os.sep):
+                self.send_response(404)
+                self.end_headers()
+                return
+            try:
+                with open(file_path, "rb") as f:
+                    body = f.read()
+            except FileNotFoundError:
+                self.send_response(404)
+                self.end_headers()
+                return
+            content_type, _ = mimetypes.guess_type(file_path)
+            self.send_response(200)
+            self.send_header("Content-Type", content_type or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         if self.path in ("/", "/index.html"):

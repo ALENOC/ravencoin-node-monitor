@@ -175,3 +175,7 @@ No dependencies beyond Python 3.9+.
 ## License
 
 MIT - see `LICENSE`.
+
+`app/static/raven-icon.png` is the raven icon from the official
+[RavenProject/Ravencoin](https://github.com/RavenProject/Ravencoin/tree/master/share/pixmaps)
+repository, covered by that project's own MIT license.
