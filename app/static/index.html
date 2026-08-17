@@ -433,6 +433,14 @@
       <div class="metric-row"><span class="k">Network hashrate</span><span class="v mono" id="p2p-hashrate">-</span></div>
     </div>
 
+    <div class="card" id="card-electrumx-server">
+      <h2>ElectrumX server</h2>
+      <div class="metric-row"><span class="k">Version</span><span class="v" id="ex-version">-</span></div>
+      <div class="metric-row"><span class="k">Uptime</span><span class="v mono" id="ex-uptime">-</span></div>
+      <div class="metric-row"><span class="k">DB height</span><span class="v mono" id="ex-db-height">-</span></div>
+      <div class="metric-row"><span class="k">Peer servers</span><span class="v mono" id="ex-peers">-</span></div>
+    </div>
+
     <div class="card">
       <h2>Mempool</h2>
       <div class="metric-row"><span class="k">Transactions</span><span class="v mono" id="mempool-count">-</span></div>
@@ -474,6 +482,16 @@
       </div>
     </div>
 
+    <div class="card span-2" id="card-electrumx-clients">
+      <h2>Connected Electrum clients <span class="peer-count-tag" id="client-count"></span></h2>
+      <div class="peer-scroll">
+        <table class="peer-table">
+          <thead><tr><th>Address</th><th>Client</th><th>Protocol</th><th>Duration</th></tr></thead>
+          <tbody id="client-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Recent blocks</h2>
       <div class="peer-scroll">
@@ -506,27 +524,9 @@
       <div id="extra-disks"></div>
     </div>
 
-    <div class="card" id="card-electrumx-server">
-      <h2>ElectrumX server</h2>
-      <div class="metric-row"><span class="k">Version</span><span class="v" id="ex-version">-</span></div>
-      <div class="metric-row"><span class="k">Uptime</span><span class="v mono" id="ex-uptime">-</span></div>
-      <div class="metric-row"><span class="k">DB height</span><span class="v mono" id="ex-db-height">-</span></div>
-      <div class="metric-row"><span class="k">Peer servers</span><span class="v mono" id="ex-peers">-</span></div>
-    </div>
-
     <div class="card" id="card-electrumx-checks">
       <h2>Backend compatibility</h2>
       <div class="checklist" id="compat-checklist"></div>
-    </div>
-
-    <div class="card span-2" id="card-electrumx-clients">
-      <h2>Connected Electrum clients <span class="peer-count-tag" id="client-count"></span></h2>
-      <div class="peer-scroll">
-        <table class="peer-table">
-          <thead><tr><th>Address</th><th>Client</th><th>Protocol</th><th>Duration</th></tr></thead>
-          <tbody id="client-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
-        </table>
-      </div>
     </div>
 
   </div>
