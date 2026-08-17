@@ -3,7 +3,6 @@ shelling out, so it works the same whether run bare-metal or in a
 container (as long as the container isn't run with a restricted /proc)."""
 
 import os
-import re
 import shutil
 
 
@@ -51,47 +50,6 @@ def parse_extra_disk_paths(raw):
     return entries
 
 
-def _block_device_for_path(path):
-    """Best-effort: the /dev/... device backing the mount that contains
-    `path`, found via the longest matching mountpoint prefix in
-    /proc/mounts. Linux-only; returns None anywhere this doesn't apply
-    (missing /proc/mounts, path not under a real block device, e.g. NFS).
-    """
-    best = None
-    try:
-        with open("/proc/mounts", encoding="utf-8") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                device, mountpoint = parts[0], parts[1]
-                if not device.startswith("/dev/"):
-                    continue
-                if path == mountpoint or path.startswith(mountpoint.rstrip("/") + "/"):
-                    if best is None or len(mountpoint) > len(best[1]):
-                        best = (device, mountpoint)
-    except OSError:
-        return None
-    return best[0] if best else None
-
-
-def _disk_type_hint(path):
-    """"SSD" / "HDD" / None, via /sys/block/<device>/queue/rotational.
-    Purely cosmetic - failures are silent, never block reporting disk usage.
-    """
-    device = _block_device_for_path(path)
-    if not device:
-        return None
-    name = device.rsplit("/", 1)[-1]
-    base = re.sub(r"p?\d+$", "", name) if "nvme" in name else re.sub(r"\d+$", "", name)
-    try:
-        with open(f"/sys/block/{base}/queue/rotational", encoding="utf-8") as f:
-            rotational = f.read().strip() == "1"
-    except (OSError, ValueError):
-        return None
-    return "HDD" if rotational else "SSD"
-
-
 def get_host_stats(extra_disk_paths=None):
     load1, load5, load15 = os.getloadavg()
     raw = _meminfo()
@@ -123,7 +81,7 @@ def get_host_stats(extra_disk_paths=None):
         pass
 
     extra_disks = []
-    disk_num = 0
+    disk_num = 1  # the root filesystem above is displayed as "Disk 1"
     for label, path in parse_extra_disk_paths(extra_disk_paths):
         try:
             usage = _disk_usage(path)
@@ -131,8 +89,7 @@ def get_host_stats(extra_disk_paths=None):
             continue  # path not mounted / not accessible - skip rather than error out
         if label is None:
             disk_num += 1
-            hint = _disk_type_hint(path)
-            label = f"Disk {disk_num}" + (f" ({hint})" if hint else "")
+            label = f"Disk {disk_num}"
         extra_disks.append({"label": label, "path": path, **usage})
 
     cpu_temp = None
