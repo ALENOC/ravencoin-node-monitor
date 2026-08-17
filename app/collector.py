@@ -215,7 +215,7 @@ def build_snapshot(cfg):
         "timestamp": time.time(),
         "node_name": cfg.node_name,
         "mode": "electrumx" if electrumx_data else "core",
-        "host": get_host_stats(),
+        "host": get_host_stats(cfg.extra_disk_paths),
         "electrumx": electrumx_data,
         "errors": errors,
         **core,

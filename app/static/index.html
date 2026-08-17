@@ -23,7 +23,7 @@
     --radius: 14px;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: #0f1115;
       --bg-elevated: #1a1d23;
       --border: #2a2e37;
@@ -39,6 +39,22 @@
       --bad-soft: #3a1616;
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115;
+    --bg-elevated: #1a1d23;
+    --border: #2a2e37;
+    --text: #eceef1;
+    --text-muted: #8b93a1;
+    --accent: #ff7a3d;
+    --accent-soft: #3a2618;
+    --good: #34d399;
+    --good-soft: #113626;
+    --warn: #fbbf24;
+    --warn-soft: #3a2e0d;
+    --bad: #f87171;
+    --bad-soft: #3a1616;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
   }
   * { box-sizing: border-box; }
   body {
@@ -245,7 +261,77 @@
   .kind-badge.rvn { background: var(--accent-soft); color: var(--accent); }
   .kind-badge.asset { background: var(--warn-soft); color: var(--warn); }
   .peer-count-tag { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .theme-toggle:hover { color: var(--text); }
+
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  body:not(.loaded) .v,
+  body:not(.loaded) .big-number > span:first-child {
+    display: inline-block;
+    min-width: 3.2em;
+    color: transparent !important;
+    border-radius: 4px;
+    background: linear-gradient(90deg, var(--border) 25%, var(--bg) 50%, var(--border) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+
+  @keyframes flash-new { 0% { background: var(--accent-soft); } 100% { background: transparent; } }
+  tr.tx-row-new, tr.peer-row-new { animation: flash-new 1.8s ease-out; }
+
+  @keyframes pulse-scale { 0% { transform: scale(1); } 30% { transform: scale(1.06); color: var(--accent); } 100% { transform: scale(1); } }
+  .pulse { display: inline-block; animation: pulse-scale 0.6s ease-out; }
+
+  .table-toolbar { margin-bottom: 10px; }
+  .table-search {
+    width: 100%;
+    max-width: 260px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+  }
+  .table-search:focus { outline: none; border-color: var(--accent); }
+
+  table.peer-table th[data-key] { cursor: pointer; user-select: none; }
+  table.peer-table th[data-key]:hover { color: var(--text); }
+  .sort-arrow { font-size: 9px; margin-left: 3px; opacity: 0.7; }
+
+  .copy-btn {
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0 0 0 6px;
+    line-height: 1;
+    vertical-align: middle;
+  }
+  .copy-btn:hover { color: var(--accent); }
+  .copy-btn.copied { color: var(--good); }
 </style>
+<script>
+  (function () {
+    var saved = localStorage.getItem("rncm-theme");
+    if (saved === "light" || saved === "dark") {
+      document.documentElement.setAttribute("data-theme", saved);
+    }
+  })();
+</script>
 </head>
 <body>
 <div class="wrap">
@@ -254,7 +340,12 @@
       <h1 id="node-name">Ravencoin Node Monitor</h1>
       <div class="sub"><span id="mode-sub">local network only</span> &middot; <span id="last-updated">-</span></div>
     </div>
-    <div id="overall-pill" class="status-pill"><span class="dot"></span><span id="overall-text">Connecting...</span></div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <button id="theme-toggle" class="theme-toggle" type="button" title="Toggle light/dark theme">
+        <span id="theme-icon">&#9728;</span><span id="theme-label">Auto</span>
+      </button>
+      <div id="overall-pill" class="status-pill"><span class="dot"></span><span id="overall-text">Connecting...</span></div>
+    </div>
   </header>
 
   <div id="startup-banner" class="startup-banner">
@@ -309,20 +400,34 @@
 
     <div class="card span-2">
       <h2>Mempool transactions <span class="peer-count-tag" id="mempool-tx-count"></span></h2>
+      <div class="table-toolbar"><input type="search" class="table-search" id="mempool-search" placeholder="Filter by TXID, kind, asset..."></div>
       <div class="peer-scroll">
-        <table class="peer-table">
-          <thead><tr><th>TXID</th><th>Kind</th><th>Size</th><th>Fee</th><th>Age</th><th>Deps</th></tr></thead>
-          <tbody id="mempool-tx-rows"></tbody>
+        <table class="peer-table" id="mempool-tx-table">
+          <thead><tr>
+            <th data-key="txid">TXID<span class="sort-arrow"></span></th>
+            <th data-key="kind">Kind<span class="sort-arrow"></span></th>
+            <th data-key="size">Size<span class="sort-arrow"></span></th>
+            <th data-key="fee">Fee<span class="sort-arrow"></span></th>
+            <th data-key="time">Age<span class="sort-arrow"></span></th>
+            <th data-key="depends">Deps<span class="sort-arrow"></span></th>
+          </tr></thead>
+          <tbody id="mempool-tx-rows"><tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
         </table>
       </div>
     </div>
 
     <div class="card span-2">
       <h2>Network peers <span class="peer-count-tag" id="peer-count"></span></h2>
+      <div class="table-toolbar"><input type="search" class="table-search" id="peer-search" placeholder="Filter by address, subversion..."></div>
       <div class="peer-scroll">
-        <table class="peer-table">
-          <thead><tr><th>Address</th><th>Dir</th><th>Subversion</th><th>Ping</th></tr></thead>
-          <tbody id="peer-rows"></tbody>
+        <table class="peer-table" id="peer-table">
+          <thead><tr>
+            <th data-key="addr">Address<span class="sort-arrow"></span></th>
+            <th data-key="inbound">Dir<span class="sort-arrow"></span></th>
+            <th data-key="subver">Subversion<span class="sort-arrow"></span></th>
+            <th data-key="pingtime">Ping<span class="sort-arrow"></span></th>
+          </tr></thead>
+          <tbody id="peer-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -336,6 +441,7 @@
       <div class="metric-row" style="margin-top:6px;"><span class="k">Swap</span><span class="v mono" id="host-swap">-</span></div>
       <div class="metric-row" style="margin-top:6px;"><span class="k">Disk</span><span class="v mono" id="host-disk">-</span></div>
       <div class="bar-mini"><div id="disk-bar" style="width:0%"></div></div>
+      <div id="extra-disks"></div>
     </div>
 
     <div class="card" id="card-electrumx-server">
@@ -356,7 +462,7 @@
       <div class="peer-scroll">
         <table class="peer-table">
           <thead><tr><th>Address</th><th>Client</th><th>Protocol</th><th>Duration</th></tr></thead>
-          <tbody id="client-rows"></tbody>
+          <tbody id="client-rows"><tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">Loading...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -369,6 +475,46 @@
 <script>
 const ELECTRUMX_CARDS = ["card-electrumx-server", "card-electrumx-clients"];
 const PRICE_CARD = "card-price";
+
+// --- theme toggle: cycles Auto -> Light -> Dark -> Auto ---
+function applyTheme(theme) {
+  if (theme === "light" || theme === "dark") {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("rncm-theme", theme);
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+    localStorage.removeItem("rncm-theme");
+  }
+  const icons = { auto: "☀", light: "☀", dark: "☽" };
+  const labels = { auto: "Auto", light: "Light", dark: "Dark" };
+  setText("theme-icon", icons[theme] || icons.auto);
+  setText("theme-label", labels[theme] || labels.auto);
+}
+
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const current = localStorage.getItem("rncm-theme") || "auto";
+  const next = current === "auto" ? "light" : current === "light" ? "dark" : "auto";
+  applyTheme(next);
+});
+applyTheme(localStorage.getItem("rncm-theme") || "auto");
+
+// --- copy to clipboard, delegated so it works on dynamically rendered rows ---
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".copy-btn");
+  if (!btn) return;
+  e.stopPropagation();
+  try {
+    await navigator.clipboard.writeText(btn.dataset.copy || "");
+    btn.classList.add("copied");
+    btn.textContent = "✓";
+    setTimeout(() => { btn.classList.remove("copied"); btn.textContent = "⧉"; }, 1200);
+  } catch (e) { /* clipboard unavailable, ignore */ }
+});
+
+function copyBtn(value) {
+  if (!value) return "";
+  return `<button class="copy-btn" data-copy="${value}" title="Copy">&#10697;</button>`;
+}
 
 const fmtInt = (n) => (n === null || n === undefined) ? "-" : Number(n).toLocaleString();
 
@@ -447,8 +593,19 @@ function renderPrice(price) {
   setText("price-low", price.low_24h !== null ? "$" + price.low_24h.toFixed(6) : "-");
 }
 
+let lastSeenBlocks = null;
+
 function renderSync(blockchain) {
   if (!blockchain) return;
+  if (lastSeenBlocks !== null && blockchain.blocks !== undefined && blockchain.blocks !== lastSeenBlocks) {
+    const el = document.getElementById("sync-blocks");
+    if (el) {
+      el.classList.remove("pulse");
+      void el.offsetWidth; // restart animation
+      el.classList.add("pulse");
+    }
+  }
+  lastSeenBlocks = blockchain.blocks !== undefined ? blockchain.blocks : lastSeenBlocks;
   setText("sync-blocks", fmtInt(blockchain.blocks));
   setText("sync-headers", fmtInt(blockchain.headers));
   const pct = blockchain.verificationprogress !== undefined ? blockchain.verificationprogress * 100 : 0;
@@ -475,16 +632,69 @@ function renderMempool(mempool) {
   setText("mempool-minfee", mempool.mempoolminfee !== undefined ? mempool.mempoolminfee + " RVN/kB" : "-");
 }
 
-function renderMempoolTxs(txs) {
+let mempoolTxsRaw = [];
+let mempoolSort = { key: "time", dir: -1 };
+let mempoolFilterText = "";
+let seenTxids = null; // null until first load, so nothing flashes on initial paint
+
+function sortRows(rows, sort) {
+  if (!sort.key) return rows;
+  return [...rows].sort((a, b) => {
+    let av = a[sort.key], bv = b[sort.key];
+    if (av === null || av === undefined) av = typeof bv === "string" ? "" : (sort.dir === 1 ? Infinity : -Infinity);
+    if (bv === null || bv === undefined) bv = typeof av === "string" ? "" : (sort.dir === 1 ? Infinity : -Infinity);
+    if (typeof av === "string" || typeof bv === "string") return String(av).localeCompare(String(bv)) * sort.dir;
+    return (av - bv) * sort.dir;
+  });
+}
+
+function updateSortIndicators(tableId, sort) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  table.querySelectorAll("th[data-key]").forEach(th => {
+    const arrow = th.querySelector(".sort-arrow");
+    if (!arrow) return;
+    arrow.textContent = th.dataset.key === sort.key ? (sort.dir === 1 ? "▲" : "▼") : "";
+  });
+}
+
+function wireSortableHeaders(tableId, sortState, applyFn) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  table.querySelectorAll("th[data-key]").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if (sortState.key === key) sortState.dir *= -1;
+      else { sortState.key = key; sortState.dir = 1; }
+      applyFn();
+    });
+  });
+}
+
+function applyMempoolView() {
+  let rows = mempoolTxsRaw;
+  if (mempoolFilterText) {
+    const q = mempoolFilterText.toLowerCase();
+    rows = rows.filter(tx =>
+      (tx.txid || "").toLowerCase().includes(q) ||
+      (tx.kind || "").toLowerCase().includes(q) ||
+      (tx.asset_name || "").toLowerCase().includes(q)
+    );
+  }
+  renderMempoolTxRows(sortRows(rows, mempoolSort));
+  updateSortIndicators("mempool-tx-table", mempoolSort);
+}
+
+function renderMempoolTxRows(txs) {
   const tbody = document.getElementById("mempool-tx-rows");
   const countTag = document.getElementById("mempool-tx-count");
   if (!tbody) return;
-  if (!txs || txs.length === 0) {
-    if (countTag) countTag.textContent = "";
-    tbody.innerHTML = "<tr><td colspan='6' style='text-align:center;color:var(--text-muted);padding:16px;'>empty</td></tr>";
+  const totalLabel = mempoolFilterText ? `${txs.length} of ${mempoolTxsRaw.length}` : (mempoolTxsRaw.length || "");
+  if (countTag) countTag.textContent = totalLabel;
+  if (txs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan='6' style='text-align:center;color:var(--text-muted);padding:16px;'>${mempoolTxsRaw.length ? "no matches" : "empty"}</td></tr>`;
     return;
   }
-  if (countTag) countTag.textContent = txs.length;
   tbody.innerHTML = txs.map(tx => {
     const shortId = tx.txid ? tx.txid.slice(0, 16) + "..." : "-";
     let kindBadge = "-";
@@ -494,8 +704,9 @@ function renderMempoolTxs(txs) {
       kindBadge = `<span class="kind-badge rvn">RVN</span>`;
     }
     const fee = tx.fee !== null && tx.fee !== undefined ? tx.fee.toFixed(8) + " RVN" : "-";
-    return `<tr class="tx-row" data-txid="${tx.txid}">
-      <td class="mono">${shortId}</td>
+    const isNew = seenTxids && tx.txid && !seenTxids.has(tx.txid);
+    return `<tr class="tx-row${isNew ? " tx-row-new" : ""}" data-txid="${tx.txid}">
+      <td class="mono">${shortId}${copyBtn(tx.txid)}</td>
       <td>${kindBadge}</td>
       <td>${fmtBytes(tx.size)}</td>
       <td class="mono">${fee}</td>
@@ -503,7 +714,14 @@ function renderMempoolTxs(txs) {
       <td>${tx.depends ?? 0}</td>
     </tr>`;
   }).join("");
+  seenTxids = new Set(mempoolTxsRaw.map(tx => tx.txid).filter(Boolean));
 }
+
+document.getElementById("mempool-search").addEventListener("input", (e) => {
+  mempoolFilterText = e.target.value;
+  applyMempoolView();
+});
+wireSortableHeaders("mempool-tx-table", mempoolSort, applyMempoolView);
 
 function renderTxOutputs(outputs) {
   if (!outputs || outputs.length === 0) return "<div style='color:var(--text-muted);font-size:12.5px;'>no outputs</div>";
@@ -563,29 +781,55 @@ document.addEventListener("click", (e) => {
   if (row) toggleTxDetail(row);
 });
 
-function renderPeers(peers) {
+let peersRaw = [];
+let peerSort = { key: null, dir: 1 };
+let peerFilterText = "";
+let seenPeerAddrs = null;
+
+function applyPeerView() {
+  let rows = peersRaw;
+  if (peerFilterText) {
+    const q = peerFilterText.toLowerCase();
+    rows = rows.filter(p =>
+      (p.addr || "").toLowerCase().includes(q) ||
+      (p.subver || "").toLowerCase().includes(q)
+    );
+  }
+  renderPeerRows(sortRows(rows, peerSort));
+  updateSortIndicators("peer-table", peerSort);
+}
+
+function renderPeerRows(peers) {
   const tbody = document.getElementById("peer-rows");
   const countTag = document.getElementById("peer-count");
   if (!tbody) return;
-  if (!peers || peers.length === 0) {
-    if (countTag) countTag.textContent = "";
-    tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>no peers</td></tr>";
+  const totalLabel = peerFilterText ? `${peers.length} of ${peersRaw.length}` : (peersRaw.length || "");
+  if (countTag) countTag.textContent = totalLabel;
+  if (peers.length === 0) {
+    tbody.innerHTML = `<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>${peersRaw.length ? "no matches" : "no peers"}</td></tr>`;
     return;
   }
-  if (countTag) countTag.textContent = peers.length;
   tbody.innerHTML = peers.map(p => {
     const dir = p.inbound
       ? `<span class="dir-badge in">IN</span>`
       : `<span class="dir-badge out">OUT</span>`;
     const ping = p.pingtime !== null && p.pingtime !== undefined ? (p.pingtime * 1000).toFixed(0) + " ms" : "-";
-    return `<tr>
-      <td class="mono">${p.addr || "-"}</td>
+    const isNew = seenPeerAddrs && p.addr && !seenPeerAddrs.has(p.addr);
+    return `<tr class="${isNew ? "peer-row-new" : ""}">
+      <td class="mono">${p.addr || "-"}${copyBtn(p.addr)}</td>
       <td>${dir}</td>
       <td class="mono">${p.subver || "-"}</td>
       <td>${ping}</td>
     </tr>`;
   }).join("");
+  seenPeerAddrs = new Set(peersRaw.map(p => p.addr).filter(Boolean));
 }
+
+document.getElementById("peer-search").addEventListener("input", (e) => {
+  peerFilterText = e.target.value;
+  applyPeerView();
+});
+wireSortableHeaders("peer-table", peerSort, applyPeerView);
 
 function renderHost(host) {
   if (!host) return;
@@ -605,6 +849,15 @@ function renderHost(host) {
   if (host.disk && host.disk.total_gb) {
     setText("host-disk", `${host.disk.free_gb} GB free / ${host.disk.total_gb} GB`);
     if (diskBar) diskBar.style.width = (host.disk.used_percent || 0) + "%";
+  }
+
+  const extraEl = document.getElementById("extra-disks");
+  if (extraEl) {
+    const disks = host.extra_disks || [];
+    extraEl.innerHTML = disks.map(d => `
+      <div class="metric-row" style="margin-top:6px;"><span class="k">${d.label}</span><span class="v mono">${d.free_gb} GB free / ${d.total_gb} GB</span></div>
+      <div class="bar-mini"><div style="width:${d.used_percent || 0}%"></div></div>
+    `).join("");
   }
 }
 
@@ -628,7 +881,7 @@ function renderElectrumx(ex) {
       tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>no clients connected</td></tr>";
     } else {
       tbody.innerHTML = sessions.map(s => `<tr>
-        <td class="mono">${s.remote_address || "-"}</td>
+        <td class="mono">${s.remote_address || "-"}${copyBtn(s.remote_address)}</td>
         <td class="mono">${s.client || "-"}</td>
         <td>${s.protocol_version || "-"}</td>
         <td>${fmtDuration(s.duration)}</td>
@@ -684,10 +937,13 @@ async function refresh() {
     renderNetwork(d.network, d.network_hashrate);
     setText("node-uptime", fmtDuration(d.uptime_seconds));
     renderMempool(d.mempool);
-    renderMempoolTxs(d.mempool_txs);
-    renderPeers(d.peers);
+    mempoolTxsRaw = d.mempool_txs || [];
+    applyMempoolView();
+    peersRaw = d.peers || [];
+    applyPeerView();
     renderHost(d.host);
     renderElectrumx(d.electrumx);
+    document.body.classList.add("loaded");
   } catch (e) {
     setPill("bad", "Unreachable");
     const errBanner = document.getElementById("error-banner");

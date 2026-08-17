@@ -79,6 +79,10 @@ class Config:
     price_feed_symbol: str = "RVNUSDT"
     price_poll_interval: int = 300
 
+    # "Label=/path,Label2=/path2" - extra mounted volumes to report disk
+    # usage for (e.g. blockchain data on a separate drive from the OS).
+    extra_disk_paths: str = ""
+
 
 def load() -> Config:
     ex_ssl_host = _env("ELECTRUMX_SSL_HOST", _env("ELECTRUMX_RPC_HOST", "127.0.0.1"))
@@ -108,4 +112,5 @@ def load() -> Config:
         price_feed_enabled=_env_bool("PRICE_FEED_ENABLED", False),
         price_feed_symbol=_env("PRICE_FEED_SYMBOL", "RVNUSDT"),
         price_poll_interval=_env_int("PRICE_POLL_INTERVAL", 300),
+        extra_disk_paths=_env("EXTRA_DISK_PATHS", ""),
     )

@@ -19,7 +19,36 @@ def _meminfo():
     return raw
 
 
-def get_host_stats():
+def _disk_usage(path):
+    usage = shutil.disk_usage(path)
+    return {
+        "total_gb": round(usage.total / 1e9, 1),
+        "used_gb": round(usage.used / 1e9, 1),
+        "free_gb": round(usage.free / 1e9, 1),
+        "used_percent": round(usage.used / usage.total * 100, 1),
+    }
+
+
+def parse_extra_disk_paths(raw):
+    """"Label=/path,Label2=/path2" (or bare "/path" entries, label defaults
+    to the path) -> [(label, path), ...]. Lets an operator surface extra
+    mounted volumes (e.g. blockchain data on a separate SSD) without this
+    being hardcoded to any one deployment's layout.
+    """
+    entries = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" in part:
+            label, path = part.split("=", 1)
+        else:
+            label, path = part, part
+        entries.append((label.strip(), path.strip()))
+    return entries
+
+
+def get_host_stats(extra_disk_paths=None):
     load1, load5, load15 = os.getloadavg()
     raw = _meminfo()
 
@@ -45,15 +74,16 @@ def get_host_stats():
 
     disk = {}
     try:
-        usage = shutil.disk_usage("/")
-        disk = {
-            "total_gb": round(usage.total / 1e9, 1),
-            "used_gb": round(usage.used / 1e9, 1),
-            "free_gb": round(usage.free / 1e9, 1),
-            "used_percent": round(usage.used / usage.total * 100, 1),
-        }
+        disk = _disk_usage("/")
     except OSError:
         pass
+
+    extra_disks = []
+    for label, path in parse_extra_disk_paths(extra_disk_paths):
+        try:
+            extra_disks.append({"label": label, "path": path, **_disk_usage(path)})
+        except OSError:
+            continue  # path not mounted / not accessible - skip rather than error out
 
     cpu_temp = None
     try:
@@ -67,5 +97,6 @@ def get_host_stats():
         "mem": mem,
         "swap": swap,
         "disk": disk,
+        "extra_disks": extra_disks,
         "cpu_temp_c": cpu_temp,
     }
