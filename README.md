@@ -10,9 +10,17 @@ Docker image that runs on anything from a Raspberry Pi to a VPS.
 
 ## Features
 
-- Sync status, P2P peers (with addresses), mempool stats and transaction
-  list (with RVN vs. asset-transfer classification), host resource usage
-  (load, memory, swap, disk, CPU temperature)
+- Sync status, network hashrate, P2P peers (with addresses), mempool stats
+  and transaction list (with RVN vs. asset-transfer classification), host
+  resource usage (load, memory, swap, disk, CPU temperature)
+- Click a mempool transaction for full detail: inputs, and every output's
+  address, type, and RVN or asset amount
+- Sortable and filterable peer/mempool tables, copy-to-clipboard on
+  addresses and TXIDs, manual light/dark/auto theme toggle
+- Reports disk usage for extra mounted volumes (e.g. blockchain data on a
+  separate drive from the OS), not just the root filesystem
+- A dedicated "node is starting up" state (instead of a wall of RPC
+  errors) while Core is loading its block index after a restart
 - Optional RVN/USDT price ticker (Binance public API)
 - Optional ElectrumX section: server info and a live list of connected
   Electrum clients with their addresses
@@ -48,6 +56,7 @@ full list with defaults. Highlights:
 | `ELECTRUMX_RPC_HOST` / `_PORT` | ElectrumX's admin RPC (`rpc://`), default port 8000 |
 | `ELECTRUMX_SSL_HOST` / `_PORT` / `_SNI` | ElectrumX's public `ssl://` port, used read-only for backend sync info |
 | `PRICE_FEED_ENABLED` | Off by default; set `true` to poll Binance for RVN/USDT |
+| `EXTRA_DISK_PATHS` | `Label=/path,Label2=/path2` - report disk usage for extra mounted volumes beyond `/` |
 
 Credentials can be supplied either as plain environment variables or as
 file paths (`*_FILE`), so you can mount Docker/Compose secrets instead of
@@ -125,6 +134,34 @@ a single JSON-RPC call) and marked `RVN` or `ASSET: <name>` based on
 whether any output carries an asset transfer. This only sees transactions
 currently in Core's own mempool - it is not a general asset explorer, and
 it does not require `txindex=1`.
+
+## Transaction detail
+
+`GET /api/tx/<txid>` fetches full detail for one transaction on demand
+(size, version, locktime, inputs, and every output's address/type/amount)
+- it is not part of the periodic `/api/status` snapshot, so a large mempool
+doesn't bloat every poll cycle. The UI calls it when you click a mempool
+transaction row. Input amounts aren't resolved (that would need one extra
+RPC call per input to look up the spent output), only what's directly on
+the raw transaction is shown.
+
+## Updating a running deployment
+
+If you're running via `docker compose` and only copy new source files into
+the container's filesystem (`docker cp`) without rebuilding the image, the
+change is temporary: the next time the container is recreated for *any*
+reason - a reboot, `docker compose up -d` after touching `.env` or a
+compose file, a Docker upgrade - Compose recreates it from the last-built
+**image**, silently reverting to the old code. Always rebuild before
+recreating:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+The source tree on disk is the source of truth; the image should always be
+rebuilt from it, never hand-patched and left that way.
 
 ## Running without Docker
 
