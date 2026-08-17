@@ -55,6 +55,35 @@ class NormalNodeTests(CollectorTestCase):
         snap = collector.build_snapshot(cfg, st)
         self.assertEqual(snap["core_version"]["version"], "Ravencoin:4.8.0")
 
+    def test_peer_subver_splits_into_version_and_comment(self):
+        core = synced_core(connections=1)
+        core.set("getpeerinfo", lambda params: [
+            {"addr": "10.0.0.1:8767", "subver": "/Ravencoin:4.8.0(RG5MujXzxARjWChWdU2awbAQa9ZCH52yrh)/", "inbound": False, "pingtime": 0.05},
+            {"addr": "10.0.0.2:8767", "subver": "/Ravencoin:4.7.0/", "inbound": True, "pingtime": 0.06},
+        ])
+        self.patch_rpc(core)
+        cfg = make_cfg()
+        st = state_module.MonitorState(cfg)
+        snap = collector.build_snapshot(cfg, st)
+        with_comment, without_comment = snap["peers"]
+        self.assertEqual(with_comment["subver_version"], "Ravencoin:4.8.0")
+        self.assertEqual(with_comment["subver_comment"], "RG5MujXzxARjWChWdU2awbAQa9ZCH52yrh")
+        self.assertEqual(without_comment["subver_version"], "Ravencoin:4.7.0")
+        self.assertIsNone(without_comment["subver_comment"])
+
+    def test_core_version_display_strips_uacomment(self):
+        core = synced_core()  # subversion "/Ravencoin:4.8.0/"
+        core.set("getnetworkinfo", {
+            "version": 4080000,
+            "subversion": "/Ravencoin:4.8.0(RG5MujXzxARjWChWdU2awbAQa9ZCH52yrh)/",
+            "protocolversion": 70028,
+        })
+        self.patch_rpc(core)
+        cfg = make_cfg()
+        st = state_module.MonitorState(cfg)
+        snap = collector.build_snapshot(cfg, st)
+        self.assertEqual(snap["core_version"]["version"], "Ravencoin:4.8.0")
+
     def test_core_version_safety_check(self):
         core = synced_core()
         self.patch_rpc(core)

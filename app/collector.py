@@ -58,15 +58,31 @@ def _get_recent_blocks(cfg, tip_height, errors):
     return blocks
 
 
+def _parse_subver(subver):
+    """Split a raw P2P subversion string into (version, comment).
+
+    Core reports this as "/Ravencoin:4.8.0/" or, with an operator-set
+    uacomment (e.g. a donation address), "/Ravencoin:4.8.0(comment)/" -
+    the slashes are wire-format framing, and the parenthesized part is a
+    free-form comment, not part of the version. Any peer can set this to
+    arbitrary text, so callers must still escape it before display.
+    """
+    stripped = (subver or "").strip("/")
+    if not stripped:
+        return None, None
+    if "(" in stripped and stripped.endswith(")"):
+        version, _, comment = stripped.partition("(")
+        return version.strip() or None, comment[:-1].strip() or None
+    return stripped, None
+
+
 def _core_version_status(network, cfg):
     if not network:
         return None
     minimum = (cfg.min_safe_core_version or "").strip()
-    # Core reports this as "/Ravencoin:4.8.0/" - the slashes are wire-format
-    # framing from the P2P subversion string, not part of the version.
-    subversion = (network.get("subversion") or "").strip("/") or None
+    version_display, _ = _parse_subver(network.get("subversion"))
     result = {
-        "version": subversion,
+        "version": version_display,
         "protocol_version": network.get("protocolversion"),
         "minimum_safe_version": minimum or None,
         "safe": True,
@@ -151,19 +167,21 @@ def _collect_core(cfg, errors):
         raw_peers = rpc.call(cfg, "getpeerinfo")
         if not isinstance(raw_peers, list):
             raise rpc.RpcError(f"malformed getpeerinfo result: {raw_peers!r}")
-        peers = [
-            {
+        peers = []
+        for p in raw_peers:
+            subver_version, subver_comment = _parse_subver(p.get("subver"))
+            peers.append({
                 "addr": p.get("addr"),
                 "subver": p.get("subver"),
+                "subver_version": subver_version,
+                "subver_comment": subver_comment,
                 "inbound": p.get("inbound"),
                 "conntime": p.get("conntime"),
                 "pingtime": p.get("pingtime"),
                 "synced_blocks": p.get("synced_blocks"),
                 "bytessent": p.get("bytessent"),
                 "bytesrecv": p.get("bytesrecv"),
-            }
-            for p in raw_peers
-        ]
+            })
     except rpc.RpcError as exc:
         errors.append(f"getpeerinfo: {exc}")
 
