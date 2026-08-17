@@ -1,0 +1,22 @@
+services:
+  monitor:
+    build: .
+    # image: ghcr.io/OWNER/ravencoin-node-monitor:latest
+    container_name: ravencoin-node-monitor
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      # Bind to the LAN interface only. Do not publish this on 0.0.0.0
+      # unless you put your own auth/reverse proxy in front of it - the
+      # dashboard has no login of its own.
+      - "127.0.0.1:8899:8899"
+    # Uncomment if your Ravencoin Core RPC port is only reachable from a
+    # specific Docker network (e.g. a docker-compose stack running Core):
+    # networks:
+    #   - ravencoin-backend
+
+# networks:
+#   ravencoin-backend:
+#     external: true
+#     name: <name-of-your-existing-network>

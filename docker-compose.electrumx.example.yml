@@ -1,0 +1,25 @@
+# Example override for a Core + ElectrumX bundle where ElectrumX's admin
+# RPC port only binds to 127.0.0.1 inside its own container (the common,
+# more secure default - see README "ElectrumX admin RPC" section).
+#
+# network_mode: "container:<name>" puts this container in the SAME network
+# namespace as your ElectrumX container, so 127.0.0.1 inside the monitor
+# is 127.0.0.1 inside ElectrumX, and the admin RPC becomes reachable
+# without exposing it anywhere else.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.electrumx.example.yml up -d
+#
+# Adjust CONTAINER_NAME_HERE and CORE_HOSTNAME_HERE to match your stack.
+
+services:
+  monitor:
+    network_mode: "container:CONTAINER_NAME_HERE"
+    ports: []  # port publishing must happen on the target container instead
+    environment:
+      - ELECTRUMX_ENABLED=true
+      - ELECTRUMX_RPC_HOST=127.0.0.1
+      - ELECTRUMX_RPC_PORT=8000
+      - ELECTRUMX_SSL_HOST=127.0.0.1
+      - ELECTRUMX_SSL_PORT=50002
+      - CORE_RPC_HOST=CORE_HOSTNAME_HERE

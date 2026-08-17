@@ -1,0 +1,19 @@
+[Unit]
+Description=ravencoin-node-monitor: ElectrumX admin RPC poller
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/ravencoin-node-monitor/contrib/electrumx-admin-poller.py \
+  --container CONTAINER_NAME_HERE \
+  --output /var/lib/ravencoin-node-monitor/electrumx-admin.json \
+  --interval 10
+Restart=on-failure
+RestartSec=5
+User=root
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ravencoin-node-monitor
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ravencoin Node Monitor</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --bg-elevated: #ffffff;
+    --border: #e2e4e9;
+    --text: #14161a;
+    --text-muted: #6b7280;
+    --accent: #f2621a;
+    --accent-soft: #fde8dc;
+    --good: #16a34a;
+    --good-soft: #dcfce7;
+    --warn: #d97706;
+    --warn-soft: #fef3c7;
+    --bad: #dc2626;
+    --bad-soft: #fee2e2;
+    --shadow: 0 1px 2px rgba(20,22,26,0.05), 0 4px 12px rgba(20,22,26,0.04);
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --bg-elevated: #1a1d23;
+      --border: #2a2e37;
+      --text: #eceef1;
+      --text-muted: #8b93a1;
+      --accent: #ff7a3d;
+      --accent-soft: #3a2618;
+      --good: #34d399;
+      --good-soft: #113626;
+      --warn: #fbbf24;
+      --warn-soft: #3a2e0d;
+      --bad: #f87171;
+      --bad-soft: #3a1616;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .title-block h1 {
+    font-size: 22px;
+    margin: 0 0 2px;
+    letter-spacing: -0.01em;
+  }
+  .title-block .sub {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--good-soft);
+    color: var(--good);
+    white-space: nowrap;
+  }
+  .status-pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .status-pill.bad { background: var(--bad-soft); color: var(--bad); }
+  .status-pill .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor;
+  }
+  .error-banner {
+    background: var(--warn-soft);
+    color: var(--warn);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .error-banner.show { display: block; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .card.span-2 { grid-column: span 2; }
+  @media (max-width: 640px) {
+    .card.span-2 { grid-column: span 1; }
+    .wrap { padding: 16px 12px 40px; }
+    .card { padding: 16px; }
+  }
+  .card.hidden { display: none !important; }
+  .card h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .metric-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--border);
+    font-size: 14px;
+  }
+  .metric-row:last-child { border-bottom: none; }
+  .metric-row .k { color: var(--text-muted); }
+  .metric-row .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .big-number {
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .big-number .unit { font-size: 15px; font-weight: 500; color: var(--text-muted); margin-left: 4px; }
+  .change-tag { font-size: 14px; font-weight: 700; margin-left: 8px; }
+  .change-tag.up { color: var(--good); }
+  .change-tag.down { color: var(--bad); }
+  .progress {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+    margin: 10px 0 4px;
+  }
+  .progress > div { height: 100%; background: var(--accent); transition: width 0.5s ease; }
+  .bar-mini {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .bar-mini > div { height: 100%; background: var(--accent); }
+  .checklist { display: flex; flex-direction: column; gap: 8px; }
+  .check-item { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+  .check-item .icon {
+    width: 16px; height: 16px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
+    background: var(--good-soft); color: var(--good);
+  }
+  .check-item .icon.no { background: var(--bad-soft); color: var(--bad); }
+  footer { margin-top: 28px; text-align: center; font-size: 12.5px; color: var(--text-muted); }
+  .mono { font-variant-numeric: tabular-nums; }
+  .peer-scroll {
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+  table.peer-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+  table.peer-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-elevated);
+    text-align: left;
+    padding: 9px 12px;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+  table.peer-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  table.peer-table tbody tr:last-child td { border-bottom: none; }
+  table.peer-table tbody tr:hover { background: var(--bg); }
+  .dir-badge, .kind-badge { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; }
+  .dir-badge.in { background: var(--good-soft); color: var(--good); }
+  .dir-badge.out { background: var(--accent-soft); color: var(--accent); }
+  .kind-badge.rvn { background: var(--accent-soft); color: var(--accent); }
+  .kind-badge.asset { background: var(--warn-soft); color: var(--warn); }
+  .peer-count-tag { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="title-block">
+      <h1 id="node-name">Ravencoin Node Monitor</h1>
+      <div class="sub" id="mode-sub">local network only &middot; <span id="last-updated">-</span></div>
+    </div>
+    <div id="overall-pill" class="status-pill"><span class="dot"></span><span id="overall-text">Connecting...</span></div>
+  </header>
+
+  <div id="error-banner" class="error-banner"></div>
+
+  <div class="grid">
+
+    <div class="card" id="card-price">
+      <h2>RVN / USDT</h2>
+      <div class="big-number"><span id="price-value">-</span><span class="change-tag" id="price-change"></span></div>
+      <div class="metric-row"><span class="k">24h high</span><span class="v mono" id="price-high">-</span></div>
+      <div class="metric-row"><span class="k">24h low</span><span class="v mono" id="price-low">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Sync</h2>
+      <div class="big-number"><span id="sync-blocks">-</span></div>
+      <div class="sub" style="color:var(--text-muted);font-size:13px;margin-top:2px;">blocks</div>
+      <div class="progress"><div id="sync-bar" style="width:0%"></div></div>
+      <div class="metric-row"><span class="k">Headers</span><span class="v mono" id="sync-headers">-</span></div>
+      <div class="metric-row"><span class="k">Progress</span><span class="v mono" id="sync-progress">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Node</h2>
+      <div class="metric-row"><span class="k">Chain</span><span class="v" id="node-chain">-</span></div>
+      <div class="metric-row"><span class="k">Size on disk</span><span class="v mono" id="node-size">-</span></div>
+      <div class="metric-row"><span class="k">Uptime</span><span class="v mono" id="node-uptime">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>P2P network</h2>
+      <div class="metric-row"><span class="k">Connections</span><span class="v mono" id="p2p-connections">-</span></div>
+      <div class="metric-row"><span class="k">Protocol</span><span class="v mono" id="p2p-protocol">-</span></div>
+      <div class="metric-row"><span class="k">Difficulty</span><span class="v mono" id="sync-difficulty">-</span></div>
+      <div class="metric-row"><span class="k">Network hashrate</span><span class="v mono" id="p2p-hashrate">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Mempool</h2>
+      <div class="metric-row"><span class="k">Transactions</span><span class="v mono" id="mempool-count">-</span></div>
+      <div class="metric-row"><span class="k">Size</span><span class="v mono" id="mempool-bytes">-</span></div>
+      <div class="metric-row"><span class="k">Min fee</span><span class="v mono" id="mempool-minfee">-</span></div>
+    </div>
+
+    <div class="card span-2">
+      <h2>Mempool transactions <span class="peer-count-tag" id="mempool-tx-count"></span></h2>
+      <div class="peer-scroll">
+        <table class="peer-table">
+          <thead><tr><th>TXID</th><th>Kind</th><th>Size</th><th>Fee</th><th>Age</th><th>Deps</th></tr></thead>
+          <tbody id="mempool-tx-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card span-2">
+      <h2>Network peers <span class="peer-count-tag" id="peer-count"></span></h2>
+      <div class="peer-scroll">
+        <table class="peer-table">
+          <thead><tr><th>Address</th><th>Dir</th><th>Subversion</th><th>Ping</th></tr></thead>
+          <tbody id="peer-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Host resources</h2>
+      <div class="metric-row"><span class="k">Load (1/5/15m)</span><span class="v mono" id="host-load">-</span></div>
+      <div class="metric-row"><span class="k">CPU temp</span><span class="v mono" id="host-temp">-</span></div>
+      <div class="metric-row" style="margin-top:2px;"><span class="k">Memory</span><span class="v mono" id="host-mem">-</span></div>
+      <div class="bar-mini"><div id="mem-bar" style="width:0%"></div></div>
+      <div class="metric-row" style="margin-top:6px;"><span class="k">Swap</span><span class="v mono" id="host-swap">-</span></div>
+      <div class="metric-row" style="margin-top:6px;"><span class="k">Disk</span><span class="v mono" id="host-disk">-</span></div>
+      <div class="bar-mini"><div id="disk-bar" style="width:0%"></div></div>
+    </div>
+
+    <div class="card" id="card-electrumx-server">
+      <h2>ElectrumX server</h2>
+      <div class="metric-row"><span class="k">Version</span><span class="v" id="ex-version">-</span></div>
+      <div class="metric-row"><span class="k">Uptime</span><span class="v mono" id="ex-uptime">-</span></div>
+      <div class="metric-row"><span class="k">DB height</span><span class="v mono" id="ex-db-height">-</span></div>
+      <div class="metric-row"><span class="k">Peer servers</span><span class="v mono" id="ex-peers">-</span></div>
+    </div>
+
+    <div class="card" id="card-electrumx-checks">
+      <h2>Backend compatibility</h2>
+      <div class="checklist" id="compat-checklist"></div>
+    </div>
+
+    <div class="card span-2" id="card-electrumx-clients">
+      <h2>Connected Electrum clients <span class="peer-count-tag" id="client-count"></span></h2>
+      <div class="peer-scroll">
+        <table class="peer-table">
+          <thead><tr><th>Address</th><th>Client</th><th>Protocol</th><th>Duration</th></tr></thead>
+          <tbody id="client-rows"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>Local network monitor &middot; not exposed to the internet &middot; auto-refreshes every few seconds</footer>
+</div>
+
+<script>
+const ELECTRUMX_CARDS = ["card-electrumx-server", "card-electrumx-clients"];
+const PRICE_CARD = "card-price";
+
+const fmtInt = (n) => (n === null || n === undefined) ? "-" : Number(n).toLocaleString();
+
+function fmtDuration(seconds) {
+  if (seconds === null || seconds === undefined) return "-";
+  seconds = Math.max(0, Math.floor(seconds));
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function fmtAge(unixTime) {
+  if (!unixTime) return "-";
+  return fmtDuration(Date.now() / 1000 - unixTime);
+}
+
+function fmtBytes(n) {
+  if (n === null || n === undefined) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v < 10 && i > 0 ? 2 : 0) + " " + units[i];
+}
+
+function fmtHashrate(hps) {
+  if (hps === null || hps === undefined) return "-";
+  const units = ["H/s", "KH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s"];
+  let i = 0, v = hps;
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+  return v.toFixed(2) + " " + units[i];
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function show(id, visible) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle("hidden", !visible);
+}
+
+function setPill(state, text) {
+  const pill = document.getElementById("overall-pill");
+  pill.className = "status-pill" + (state === "good" ? "" : state === "warn" ? " warn" : " bad");
+  document.getElementById("overall-text").textContent = text;
+}
+
+function checkItem(ok, label) {
+  const div = document.createElement("div");
+  div.className = "check-item";
+  div.innerHTML = `<span class="icon ${ok ? "" : "no"}">${ok ? "&#10003;" : "&#10007;"}</span><span>${label}</span>`;
+  return div;
+}
+
+function renderPrice(price) {
+  if (!price) { show(PRICE_CARD, false); return; }
+  show(PRICE_CARD, true);
+  setText("price-value", price.last_price !== null ? "$" + price.last_price.toFixed(6) : "-");
+  const change = price.price_change_percent;
+  const changeEl = document.getElementById("price-change");
+  if (changeEl) {
+    if (change !== null && change !== undefined) {
+      changeEl.textContent = (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
+      changeEl.className = "change-tag " + (change >= 0 ? "up" : "down");
+    } else {
+      changeEl.textContent = "";
+    }
+  }
+  setText("price-high", price.high_24h !== null ? "$" + price.high_24h.toFixed(6) : "-");
+  setText("price-low", price.low_24h !== null ? "$" + price.low_24h.toFixed(6) : "-");
+}
+
+function renderSync(blockchain) {
+  if (!blockchain) return;
+  setText("sync-blocks", fmtInt(blockchain.blocks));
+  setText("sync-headers", fmtInt(blockchain.headers));
+  const pct = blockchain.verificationprogress !== undefined ? blockchain.verificationprogress * 100 : 0;
+  setText("sync-progress", blockchain.verificationprogress !== undefined ? pct.toFixed(2) + "%" : "-");
+  const bar = document.getElementById("sync-bar");
+  if (bar) bar.style.width = Math.min(100, Math.max(0, pct)) + "%";
+  setText("sync-difficulty", blockchain.difficulty !== undefined ? blockchain.difficulty.toFixed(2) : "-");
+  setText("node-chain", blockchain.chain || "-");
+  setText("node-size", fmtBytes(blockchain.size_on_disk));
+}
+
+function renderNetwork(network, hashrate) {
+  if (network) {
+    setText("p2p-connections", fmtInt(network.connections));
+    setText("p2p-protocol", network.protocolversion !== undefined ? network.protocolversion : "-");
+  }
+  setText("p2p-hashrate", fmtHashrate(hashrate));
+}
+
+function renderMempool(mempool) {
+  if (!mempool) return;
+  setText("mempool-count", fmtInt(mempool.size));
+  setText("mempool-bytes", fmtBytes(mempool.bytes));
+  setText("mempool-minfee", mempool.mempoolminfee !== undefined ? mempool.mempoolminfee + " RVN/kB" : "-");
+}
+
+function renderMempoolTxs(txs) {
+  const tbody = document.getElementById("mempool-tx-rows");
+  const countTag = document.getElementById("mempool-tx-count");
+  if (!tbody) return;
+  if (!txs || txs.length === 0) {
+    if (countTag) countTag.textContent = "";
+    tbody.innerHTML = "<tr><td colspan='6' style='text-align:center;color:var(--text-muted);padding:16px;'>empty</td></tr>";
+    return;
+  }
+  if (countTag) countTag.textContent = txs.length;
+  tbody.innerHTML = txs.map(tx => {
+    const shortId = tx.txid ? tx.txid.slice(0, 16) + "..." : "-";
+    let kindBadge = "-";
+    if (tx.kind === "ASSET") {
+      kindBadge = `<span class="kind-badge asset">ASSET${tx.asset_name ? ": " + tx.asset_name : ""}</span>`;
+    } else if (tx.kind === "RVN") {
+      kindBadge = `<span class="kind-badge rvn">RVN</span>`;
+    }
+    const fee = tx.fee !== null && tx.fee !== undefined ? tx.fee.toFixed(8) + " RVN" : "-";
+    return `<tr>
+      <td class="mono">${shortId}</td>
+      <td>${kindBadge}</td>
+      <td>${fmtBytes(tx.size)}</td>
+      <td class="mono">${fee}</td>
+      <td>${fmtAge(tx.time)}</td>
+      <td>${tx.depends ?? 0}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderPeers(peers) {
+  const tbody = document.getElementById("peer-rows");
+  const countTag = document.getElementById("peer-count");
+  if (!tbody) return;
+  if (!peers || peers.length === 0) {
+    if (countTag) countTag.textContent = "";
+    tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>no peers</td></tr>";
+    return;
+  }
+  if (countTag) countTag.textContent = peers.length;
+  tbody.innerHTML = peers.map(p => {
+    const dir = p.inbound
+      ? `<span class="dir-badge in">IN</span>`
+      : `<span class="dir-badge out">OUT</span>`;
+    const ping = p.pingtime !== null && p.pingtime !== undefined ? (p.pingtime * 1000).toFixed(0) + " ms" : "-";
+    return `<tr>
+      <td class="mono">${p.addr || "-"}</td>
+      <td>${dir}</td>
+      <td class="mono">${p.subver || "-"}</td>
+      <td>${ping}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderHost(host) {
+  if (!host) return;
+  if (host.load) setText("host-load", `${host.load["1m"]} / ${host.load["5m"]} / ${host.load["15m"]}`);
+  setText("host-temp", host.cpu_temp_c !== null && host.cpu_temp_c !== undefined ? host.cpu_temp_c + " C" : "n/a");
+  const memBar = document.getElementById("mem-bar");
+  if (host.mem && host.mem.total_gb) {
+    setText("host-mem", `${host.mem.available_gb} GB free / ${host.mem.total_gb} GB`);
+    if (memBar) memBar.style.width = (host.mem.used_percent || 0) + "%";
+  }
+  if (host.swap && host.swap.total_gb) {
+    setText("host-swap", `${host.swap.used_gb} / ${host.swap.total_gb} GB (${host.swap.used_percent}%)`);
+  } else {
+    setText("host-swap", "none");
+  }
+  const diskBar = document.getElementById("disk-bar");
+  if (host.disk && host.disk.total_gb) {
+    setText("host-disk", `${host.disk.free_gb} GB free / ${host.disk.total_gb} GB`);
+    if (diskBar) diskBar.style.width = (host.disk.used_percent || 0) + "%";
+  }
+}
+
+function renderElectrumx(ex) {
+  const enabled = !!ex;
+  ELECTRUMX_CARDS.forEach(id => show(id, enabled));
+
+  const info = (ex && ex.info) || {};
+  setText("ex-version", info.version || "-");
+  setText("ex-uptime", info.uptime || "-");
+  setText("ex-db-height", fmtInt(info["db height"]));
+  const peers = info.peers || {};
+  setText("ex-peers", peers.total !== undefined ? `${peers.good ?? 0} good / ${peers.total} total` : "-");
+
+  const tbody = document.getElementById("client-rows");
+  const countTag = document.getElementById("client-count");
+  if (tbody) {
+    const sessions = (ex && ex.sessions) || [];
+    if (countTag) countTag.textContent = enabled ? sessions.length : "";
+    if (sessions.length === 0) {
+      tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>no clients connected</td></tr>";
+    } else {
+      tbody.innerHTML = sessions.map(s => `<tr>
+        <td class="mono">${s.remote_address || "-"}</td>
+        <td class="mono">${s.client || "-"}</td>
+        <td>${s.protocol_version || "-"}</td>
+        <td>${fmtDuration(s.duration)}</td>
+      </tr>`).join("");
+    }
+  }
+
+  const compat = ex && ex.backend && ex.backend.compatibility;
+  show("card-electrumx-checks", !!compat);
+  const list = document.getElementById("compat-checklist");
+  if (list) {
+    list.innerHTML = "";
+    if (compat) {
+      list.appendChild(checkItem(!!compat.coreSafe, "Core version safe"));
+      list.appendChild(checkItem(!!compat.networkMatches, "Network matches"));
+      list.appendChild(checkItem(!!compat.backendSynchronized, "Backend synchronized"));
+      list.appendChild(checkItem(compat.identityEvidence === "BUILD_IDENTITY_VERIFIED", "Build identity verified"));
+    }
+  }
+}
+
+async function refresh() {
+  try {
+    const resp = await fetch("/api/status", { cache: "no-store" });
+    const d = await resp.json();
+
+    setText("node-name", d.node_name || "Ravencoin Node Monitor");
+    setText("mode-sub", (d.mode === "electrumx" ? "Ravencoin Core + ElectrumX" : "Ravencoin Core (standalone)") + " · local network only");
+    setText("last-updated", d.timestamp ? new Date(d.timestamp * 1000).toLocaleTimeString() : "-");
+
+    const errBanner = document.getElementById("error-banner");
+    if (d.errors && d.errors.length > 0) {
+      errBanner.textContent = "Some data could not be fetched: " + d.errors.join(" | ");
+      errBanner.classList.add("show");
+      setPill("warn", "Partial data");
+    } else {
+      errBanner.classList.remove("show");
+      setPill("good", "Online");
+    }
+
+    renderPrice(d.price);
+    renderSync(d.blockchain);
+    renderNetwork(d.network, d.network_hashrate);
+    setText("node-uptime", fmtDuration(d.uptime_seconds));
+    renderMempool(d.mempool);
+    renderMempoolTxs(d.mempool_txs);
+    renderPeers(d.peers);
+    renderHost(d.host);
+    renderElectrumx(d.electrumx);
+  } catch (e) {
+    setPill("bad", "Unreachable");
+    const errBanner = document.getElementById("error-banner");
+    errBanner.textContent = "Could not reach the monitor backend: " + e;
+    errBanner.classList.add("show");
+  }
+}
+
+refresh();
+setInterval(refresh, 8000);
+</script>
+</body>
+</html>
