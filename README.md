@@ -67,18 +67,84 @@ handful of small focused endpoints, auto-refreshing page.
 
 ## Quick start
 
+Five steps, copy-pasteable, no assumed knowledge.
+
+**1. Install Docker**, if you don't already have it. On Debian, Ubuntu, or
+Raspberry Pi OS:
+
 ```bash
-cp .env.example .env
-# edit .env: set CORE_RPC_USER / CORE_RPC_PASSWORD (or the _FILE variants)
-# to match your Ravencoin Core node's rpcauth
-docker compose up -d --build
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
 ```
 
-Open `http://<host>:8899` from your LAN. The container binds
-`127.0.0.1:8899` by default in `docker-compose.yml` - it is meant to be
-reached over the LAN via your own reverse proxy, SSH tunnel, or a firewall
-rule you control. **It has no authentication of its own; do not expose it
-to the public internet.**
+Log out and back in (or run `newgrp docker`) for the group change to take
+effect. On other operating systems, follow
+[Docker's own install guide](https://docs.docker.com/engine/install/).
+Verify it worked:
+
+```bash
+docker compose version
+```
+
+**2. Get the code:**
+
+```bash
+git clone https://github.com/ALENOC/ravencoin-node-monitor.git
+cd ravencoin-node-monitor
+```
+
+**3. Configure it.** Copy the example env file and edit two values:
+
+```bash
+cp .env.example .env
+nano .env   # or any text editor
+```
+
+Set `CORE_RPC_USER` and `CORE_RPC_PASSWORD` to match your Ravencoin Core
+node's own `raven.conf`. If your `raven.conf` has a plain
+`rpcuser=`/`rpcpassword=` pair, copy those two values as-is. If it instead
+has an `rpcauth=` line (the hashed form Core's own helper script
+generates), that line does **not** contain a usable password - use the
+plaintext password you originally typed into that script when you
+generated it, together with the username from the same line.
+
+Also check `CORE_RPC_HOST`: leave it as `127.0.0.1` only if Core runs on
+the same machine outside Docker, or on the same Docker network with that
+exact hostname. If Core runs on a different machine, put its LAN IP or
+hostname there instead (e.g. `192.168.1.50`).
+
+**4. Start it, and confirm it's actually up before moving on:**
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+The build takes a minute or two the first time (nothing after that - it's
+plain Python, no compile step). `docker compose ps` should show one
+container, state `Up` (or `Up (healthy)` after about 15 seconds once its
+built-in healthcheck has run once). If it instead shows `Restarting` or
+exits immediately, skip ahead to the troubleshooting note below before
+doing anything else - don't just retry the same command.
+
+**5. Open it:** point a browser on the same LAN at `http://<this-machine's-IP>:8899`.
+The container binds `127.0.0.1:8899` by default - it is meant to be reached
+over the LAN via your own reverse proxy, SSH tunnel, or a firewall rule you
+control. **It has no authentication of its own; do not expose it to the
+public internet.**
+
+Don't have a browser handy on that machine, or want a scriptable check
+first? `curl http://localhost:8899/healthz` returns `{"status": "ok"}`
+once the monitor itself is running (this only confirms the monitor is
+alive, not that it can reach Core - see the troubleshooting note below
+for that).
+
+**If the page loads but shows no data:** run `docker compose logs -f` and
+look for an RPC authentication error - it almost always means
+`CORE_RPC_USER`/`CORE_RPC_PASSWORD` don't match `raven.conf`, or
+`CORE_RPC_HOST` can't reach Core from inside the container. Also confirm
+Core's `raven.conf` has `server=1` and, if the monitor and Core are on
+different machines, an `rpcallowip=` entry covering the monitor's address.
 
 ## Configuration
 
