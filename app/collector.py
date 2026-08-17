@@ -191,14 +191,28 @@ def _collect_core(cfg, errors):
     }
 
 
-def get_tx_detail(cfg, txid):
+def get_tx_detail(cfg, txid, blockhash=None):
     """Full structured detail for one transaction, fetched on demand (not
     part of the periodic snapshot - keeps /api/status small even with a
     large mempool). Input amounts aren't resolved (that needs one RPC call
     per input to look up the spent output) - only what's directly on the
     raw transaction is shown.
+
+    `blockhash`, when known (e.g. clicking a tx inside a confirmed block),
+    is passed to `getrawtransaction` on the chance the node's RPC version
+    supports the 3-argument form (only in Bitcoin-derived Cores newer than
+    the ~0.17 lineage; some Ravencoin Core builds don't). When it's not
+    accepted, or omitted, or the node doesn't run `txindex=1`, a spent
+    confirmed transaction simply won't be found - that's a real limitation
+    of the node, not something this falls back further from.
     """
-    tx = rpc.call(cfg, "getrawtransaction", [txid, True])
+    if blockhash:
+        try:
+            tx = rpc.call(cfg, "getrawtransaction", [txid, True, blockhash])
+        except rpc.RpcError:
+            tx = rpc.call(cfg, "getrawtransaction", [txid, True])
+    else:
+        tx = rpc.call(cfg, "getrawtransaction", [txid, True])
 
     outputs = []
     total_rvn = 0.0
@@ -235,6 +249,26 @@ def get_tx_detail(cfg, txid):
         "total_output_rvn": round(total_rvn, 8),
         "inputs": inputs,
         "outputs": outputs,
+    }
+
+
+def get_block_detail(cfg, blockhash):
+    """Block header fields plus the list of TXIDs it contains, fetched on
+    demand when a recent-blocks row is expanded. Doesn't fetch full detail
+    for every transaction in the block (could be thousands) - the UI fetches
+    a single transaction's detail separately (via get_tx_detail, passing
+    this blockhash) only when the user drills into one.
+    """
+    block = rpc.call(cfg, "getblock", [blockhash, 1])
+    return {
+        "hash": block.get("hash"),
+        "height": block.get("height"),
+        "time": block.get("time"),
+        "size": block.get("size"),
+        "difficulty": block.get("difficulty"),
+        "merkleroot": block.get("merkleroot"),
+        "confirmations": block.get("confirmations"),
+        "txids": block.get("tx") or [],
     }
 
 

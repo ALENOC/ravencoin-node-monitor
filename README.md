@@ -135,7 +135,7 @@ whether any output carries an asset transfer. This only sees transactions
 currently in Core's own mempool - it is not a general asset explorer, and
 it does not require `txindex=1`.
 
-## Transaction detail
+## Transaction and block detail
 
 `GET /api/tx/<txid>` fetches full detail for one transaction on demand
 (size, version, locktime, inputs, and every output's address/type/amount)
@@ -144,6 +144,18 @@ doesn't bloat every poll cycle. The UI calls it when you click a mempool
 transaction row. Input amounts aren't resolved (that would need one extra
 RPC call per input to look up the spent output), only what's directly on
 the raw transaction is shown.
+
+`GET /api/block/<hash>` fetches one block's header fields and its list of
+TXIDs - the UI calls it when you click a row in the Recent Blocks card.
+Clicking a TXID inside that list then calls `/api/tx/<txid>?blockhash=<hash>`,
+which passes the blockhash straight to `getrawtransaction`. Whether that
+actually resolves a confirmed, already-spent transaction depends on your
+node: newer Core RPC versions accept the blockhash hint directly; if yours
+doesn't (this call silently falls back to a plain 2-argument call), or your
+node doesn't run `-txindex=1`, a spent confirmed transaction will 404. This
+is a real limitation of the node's RPC surface, not something the monitor
+works around - unspent and mempool transactions always resolve fine either
+way.
 
 ## Updating a running deployment
 

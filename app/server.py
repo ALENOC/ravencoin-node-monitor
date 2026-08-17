@@ -15,6 +15,7 @@ import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 import collector
 import config
@@ -22,6 +23,8 @@ import price as price_client
 import rpc
 
 TXID_RE = re.compile(r"^/api/tx/([0-9a-fA-F]{64})$")
+BLOCK_RE = re.compile(r"^/api/block/([0-9a-fA-F]{64})$")
+HEX64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 STATIC_ASSET_RE = re.compile(r"^/static/([A-Za-z0-9_.-]+)$")
 
 cfg = config.load()
@@ -73,26 +76,44 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path in ("/api/status", "/api/status/"):
+        parsed = urlsplit(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        if path in ("/api/status", "/api/status/"):
             with _state_lock:
                 payload = dict(_state)
             self._send_json(payload)
             return
-        tx_match = TXID_RE.match(self.path)
+
+        tx_match = TXID_RE.match(path)
         if tx_match:
             txid = tx_match.group(1)
+            blockhash = query.get("blockhash", [None])[0]
+            if blockhash and not HEX64_RE.match(blockhash):
+                blockhash = None
             try:
-                detail = collector.get_tx_detail(cfg, txid)
+                detail = collector.get_tx_detail(cfg, txid, blockhash)
             except rpc.RpcError as exc:
-                self._send_json({"error": f"transaction not found or no longer in the mempool: {exc}"}, code=404)
+                self._send_json({"error": f"transaction not found: {exc}"}, code=404)
                 return
             self._send_json(detail)
             return
 
-        if self.path == "/favicon.ico":
-            self.path = "/static/raven-icon.png"
+        block_match = BLOCK_RE.match(path)
+        if block_match:
+            try:
+                detail = collector.get_block_detail(cfg, block_match.group(1))
+            except rpc.RpcError as exc:
+                self._send_json({"error": f"block not found: {exc}"}, code=404)
+                return
+            self._send_json(detail)
+            return
 
-        asset_match = STATIC_ASSET_RE.match(self.path)
+        if path == "/favicon.ico":
+            path = "/static/raven-icon.png"
+
+        asset_match = STATIC_ASSET_RE.match(path)
         if asset_match:
             file_path = os.path.join(config.STATIC_DIR, asset_match.group(1))
             # the regex already forbids "/" and "..", but confirm containment too
@@ -116,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path in ("/", "/index.html"):
+        if path in ("/", "/index.html"):
             try:
                 with open(config.INDEX_HTML_PATH, "rb") as f:
                     body = f.read()

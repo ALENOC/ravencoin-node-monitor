@@ -264,7 +264,10 @@
   }
   table.peer-table tbody tr:last-child td { border-bottom: none; }
   table.peer-table tbody tr:hover { background: var(--bg); }
-  tr.tx-row { cursor: pointer; }
+  tr.tx-row, tr.block-row, tr.block-tx-row { cursor: pointer; }
+  tr.block-detail-row td { background: var(--bg); padding: 12px 16px; white-space: normal; }
+  .block-txid-list { max-height: 220px; overflow-y: auto; font-size: 12.5px; }
+  .block-txid-list tr:hover { background: var(--border); }
   tr.tx-detail-row td {
     background: var(--bg);
     padding: 12px 16px;
@@ -786,7 +789,8 @@ function renderTxOutputs(outputs) {
   </table>`;
 }
 
-async function toggleTxDetail(row) {
+async function toggleTxDetail(row, blockhash, colspan) {
+  colspan = colspan || 6;
   const txid = row.dataset.txid;
   const next = row.nextElementSibling;
   if (next && next.classList.contains("tx-detail-row")) {
@@ -797,18 +801,19 @@ async function toggleTxDetail(row) {
 
   const detailRow = document.createElement("tr");
   detailRow.className = "tx-detail-row";
-  detailRow.innerHTML = `<td colspan="6">Loading...</td>`;
+  detailRow.innerHTML = `<td colspan="${colspan}">Loading...</td>`;
   row.after(detailRow);
 
   try {
-    const resp = await fetch(`/api/tx/${txid}`, { cache: "no-store" });
+    const url = blockhash ? `/api/tx/${txid}?blockhash=${blockhash}` : `/api/tx/${txid}`;
+    const resp = await fetch(url, { cache: "no-store" });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      detailRow.innerHTML = `<td colspan="6" style="color:var(--bad);">${err.error || "transaction not found"}</td>`;
+      detailRow.innerHTML = `<td colspan="${colspan}" style="color:var(--bad);">${err.error || "transaction not found"}</td>`;
       return;
     }
     const tx = await resp.json();
-    detailRow.innerHTML = `<td colspan="6">
+    detailRow.innerHTML = `<td colspan="${colspan}">
       <div class="tx-detail-meta">
         <span><b>Size</b> ${fmtBytes(tx.size)}</span>
         <span><b>Version</b> ${tx.version ?? "-"}</span>
@@ -820,11 +825,61 @@ async function toggleTxDetail(row) {
       ${renderTxOutputs(tx.outputs)}
     </td>`;
   } catch (e) {
-    detailRow.innerHTML = `<td colspan="6" style="color:var(--bad);">Could not load transaction: ${e}</td>`;
+    detailRow.innerHTML = `<td colspan="${colspan}" style="color:var(--bad);">Could not load transaction: ${e}</td>`;
+  }
+}
+
+const BLOCK_TXID_LIMIT = 500;
+
+async function toggleBlockDetail(row) {
+  const hash = row.dataset.hash;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("block-detail-row")) {
+    next.remove();
+    return;
+  }
+  document.querySelectorAll(".block-detail-row, .tx-detail-row").forEach(el => el.remove());
+
+  const detailRow = document.createElement("tr");
+  detailRow.className = "block-detail-row";
+  detailRow.innerHTML = `<td colspan="4">Loading...</td>`;
+  row.after(detailRow);
+
+  try {
+    const resp = await fetch(`/api/block/${hash}`, { cache: "no-store" });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      detailRow.innerHTML = `<td colspan="4" style="color:var(--bad);">${err.error || "block not found"}</td>`;
+      return;
+    }
+    const block = await resp.json();
+    const txids = block.txids || [];
+    const shown = txids.slice(0, BLOCK_TXID_LIMIT);
+    const rows = shown.map(txid => `<tr class="block-tx-row" data-txid="${txid}" data-blockhash="${block.hash}">
+      <td class="mono">${txid}${copyBtn(txid)}</td>
+    </tr>`).join("");
+    const more = txids.length > BLOCK_TXID_LIMIT
+      ? `<div style="padding:6px 8px;color:var(--text-muted);">+ ${txids.length - BLOCK_TXID_LIMIT} more</div>` : "";
+    detailRow.innerHTML = `<td colspan="4">
+      <div class="tx-detail-meta">
+        <span><b>Difficulty</b> ${block.difficulty !== undefined ? block.difficulty.toFixed(2) : "-"}</span>
+        <span><b>Merkle root</b> ${block.merkleroot ? block.merkleroot.slice(0, 16) + "..." : "-"}</span>
+        <span><b>Confirmations</b> ${block.confirmations ?? "-"}</span>
+        <span><b>Transactions</b> ${txids.length}</span>
+      </div>
+      <table class="tx-output-table block-txid-list"><tbody>${rows}</tbody></table>
+      ${more}
+    </td>`;
+  } catch (e) {
+    detailRow.innerHTML = `<td colspan="4" style="color:var(--bad);">Could not load block: ${e}</td>`;
   }
 }
 
 document.addEventListener("click", (e) => {
+  const blockTxRow = e.target.closest("tr.block-tx-row");
+  if (blockTxRow) { toggleTxDetail(blockTxRow, blockTxRow.dataset.blockhash, 1); return; }
+  const blockRow = e.target.closest("tr.block-row");
+  if (blockRow) { toggleBlockDetail(blockRow); return; }
   const row = e.target.closest("tr.tx-row");
   if (row) toggleTxDetail(row);
 });
@@ -886,7 +941,7 @@ function renderRecentBlocks(blocks) {
     tbody.innerHTML = "<tr><td colspan='4' style='text-align:center;color:var(--text-muted);padding:16px;'>no data</td></tr>";
     return;
   }
-  tbody.innerHTML = blocks.map(b => `<tr>
+  tbody.innerHTML = blocks.map(b => `<tr class="block-row" data-hash="${b.hash}">
     <td class="mono">${fmtInt(b.height)}</td>
     <td>${fmtAge(b.time)}</td>
     <td class="mono">${fmtInt(b.tx_count)}</td>
