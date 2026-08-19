@@ -47,21 +47,19 @@
       .rvn-traffic-note { color:var(--text-muted); font-size:11.5px; line-height:1.4; margin-top:10px; }
 
       /*
-       * Demo-inspired responsive masonry layout.
-       * A tiny fixed grid row is used as the masonry unit; JavaScript assigns
-       * each card the number of rows required by its actual rendered height.
-       * This prevents a tall card from forcing a large grey hole beneath the
-       * shorter card beside it.
+       * Demo-style dashboard grid. CSS Grid's default row sizing makes every
+       * card in the same row exactly as tall as the tallest card in that row.
+       * This intentionally keeps spare space inside the white card instead of
+       * leaving grey holes between cards.
        */
       .grid.dashboard-demo-layout {
         grid-template-columns:repeat(4,minmax(0,1fr));
-        grid-auto-rows:8px;
-        grid-auto-flow:dense;
-        align-items:start;
+        gap:16px;
+        align-items:stretch;
       }
       .grid.dashboard-demo-layout > .card {
         min-width:0;
-        align-self:start;
+        height:100%;
         grid-column:span 1;
       }
       .grid.dashboard-demo-layout > .card.layout-half {
@@ -77,7 +75,7 @@
       }
       @media (max-width:640px) {
         .grid.dashboard-demo-layout { grid-template-columns:1fr; }
-        .grid.dashboard-demo-layout > .card { grid-column:1 / -1; }
+        .grid.dashboard-demo-layout > .card { grid-column:1 / -1; height:auto; }
       }
       @media (max-width:480px) { .rvn-traffic-speeds { grid-template-columns:1fr; } }
     `;
@@ -114,48 +112,11 @@
 
   function configureCard(card, width) {
     if (!card) return null;
+    card.style.gridRowEnd = "";
     card.classList.remove("span-2", "span-full", "layout-half", "layout-full");
     if (width === "half") card.classList.add("layout-half");
     if (width === "full") card.classList.add("layout-full");
     return card;
-  }
-
-  let masonryRaf = 0;
-  let masonryObserver = null;
-
-  function scheduleMasonry() {
-    cancelAnimationFrame(masonryRaf);
-    masonryRaf = requestAnimationFrame(applyMasonry);
-  }
-
-  function applyMasonry() {
-    const grid = document.querySelector(".grid.dashboard-demo-layout");
-    if (!grid) return;
-
-    const styles = getComputedStyle(grid);
-    const rowHeight = parseFloat(styles.gridAutoRows) || 8;
-    const rowGap = parseFloat(styles.rowGap) || parseFloat(styles.gap) || 16;
-    const unit = rowHeight + rowGap;
-
-    grid.querySelectorAll(":scope > .card").forEach((card) => {
-      if (getComputedStyle(card).display === "none") {
-        card.style.gridRowEnd = "span 1";
-        return;
-      }
-      // Measure the natural card height; align-self:start prevents the grid
-      // area itself from stretching the card and feeding back into this value.
-      const height = card.getBoundingClientRect().height;
-      const span = Math.max(1, Math.ceil((height + rowGap) / unit));
-      card.style.gridRowEnd = `span ${span}`;
-    });
-  }
-
-  function observeMasonryCards() {
-    const grid = document.querySelector(".grid.dashboard-demo-layout");
-    if (!grid || typeof ResizeObserver === "undefined") return;
-    if (masonryObserver) masonryObserver.disconnect();
-    masonryObserver = new ResizeObserver(scheduleMasonry);
-    grid.querySelectorAll(":scope > .card").forEach((card) => masonryObserver.observe(card));
   }
 
   function installDemoLikeLayout() {
@@ -191,18 +152,11 @@
 
     for (const card of cards) grid.appendChild(card);
 
-    // The old dashboard grouped the lower cards into nested two-column
-    // wrappers. Once every known card has been moved into the flat grid,
-    // remove only wrappers that are genuinely empty so future unknown
-    // cards are never discarded.
     grid.querySelectorAll(".two-col-section").forEach((section) => {
       if (!section.querySelector(".card")) section.remove();
     });
 
     grid.classList.add("dashboard-demo-layout");
-    scheduleMasonry();
-    observeMasonryCards();
-    window.addEventListener("resize", scheduleMasonry, { passive: true });
   }
 
   function render(traffic) {
@@ -231,7 +185,6 @@
       if (cycleRow) cycleRow.classList.add("hidden");
       if (bar) bar.classList.add("hidden");
     }
-    scheduleMasonry();
   }
 
   async function refreshTraffic() {
