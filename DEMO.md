@@ -30,7 +30,7 @@ The simulated network-traffic card exists only to demonstrate how the real monit
 
 `vercel.json` rewrites `/` and `/demo` to `demo/index.html`. Vercel automatically exposes `api/demo-data.js` as `/api/demo-data`.
 
-No environment variables or API keys are required. If the GitHub repository is already connected to a Vercel project, pushes and pull requests can produce preview deployments automatically. Production deployment should point the Vercel project at this repository and keep the repository root as the project root.
+No environment variables or API keys are required. If the GitHub repository is already connected to a Vercel project, pushes and pull requests can produce preview deployments automatically. After the initial Vercel project import, pushing a new commit to an open feature branch is the simplest way to trigger a fresh Preview Deployment for that branch. Production deployment should point the Vercel project at this repository and keep the repository root as the project root.
 
 The `.vercelignore` file excludes the real Python/Docker monitor implementation from the public deployment. The Vercel site contains only the demo assets, public API aggregator, and deployment configuration.
 
