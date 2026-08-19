@@ -70,19 +70,12 @@ def _is_localish_host(host):
     return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
-def backend_info(
-    host,
-    port,
-    sni,
-    verify=False,
-    timeout=6,
-    allow_insecure_remote=False,
-):
-    if not verify and not allow_insecure_remote and not _is_localish_host(host):
+def backend_info(host, port, sni, verify=False, timeout=6):
+    if not verify and not _is_localish_host(host):
         raise ValueError(
             "refusing unverified TLS to a non-local ElectrumX host; "
-            "enable ELECTRUMX_SSL_VERIFY or explicitly set "
-            "ELECTRUMX_ALLOW_INSECURE_REMOTE=true"
+            "set ELECTRUMX_SSL_VERIFY=true and use a certificate valid for "
+            "ELECTRUMX_SSL_SNI"
         )
 
     if verify:
