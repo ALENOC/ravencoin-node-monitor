@@ -60,26 +60,26 @@ jobs:
           grep -q "SIMULATED" demo/index.html
           grep -q "NODE REQUIRED" demo/index.html
           grep -q ">History <" demo/index.html
-          grep -q ">Mempool <" demo/index.html
-          grep -q "Mempool transactions" demo/index.html
+          grep -q ">Mempool transactions <" demo/index.html
+          grep -q "Bandwidth Control" demo/index.html
+          grep -q "Connection Limits" demo/index.html
+          grep -q "125 peers · native default" demo/index.html
+          grep -q "1,000 clients · native default" demo/index.html
           grep -q "history-canvas" demo/index.html
           grep -q "brand-icon" demo/index.html
           grep -q "not connected to a private Ravencoin Core or ElectrumX" api/demo-data.js
           grep -q "data-api.binance.vision" api/demo-data.js
           grep -q "data-api.binance.vision" api/demo-history.js
-      - name: Validate embedded Ravencoin PNG icon
+      - name: Validate Ravencoin PNG icon
         run: |
           python - <<'PY'
-          import base64
           import pathlib
-          import re
-
-          html = pathlib.Path("demo/index.html").read_text(encoding="utf-8")
-          match = re.search(r'class="brand-icon"[^>]+src="data:image/png;base64,([^"]+)"', html)
-          assert match, "brand icon data URI missing"
-          raw = base64.b64decode(match.group(1), validate=True)
+          raw = pathlib.Path("demo/raven-icon.png").read_bytes()
           assert raw.startswith(b"\x89PNG\r\n\x1a\n"), "brand icon is not a valid PNG"
           assert len(raw) > 1000, "brand icon PNG unexpectedly small"
+          html = pathlib.Path("demo/index.html").read_text(encoding="utf-8")
+          assert 'class="brand-icon"' in html
+          assert 'src="/demo/raven-icon.png"' in html
           PY
 
   docker-build:
