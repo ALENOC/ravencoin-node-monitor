@@ -1,4 +1,13 @@
-const BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/24hr?symbol=RVNUSDT";
+const BINANCE_TICKERS = [
+  {
+    name: "Binance market-data-only RVN/USDT ticker",
+    url: "https://data-api.binance.vision/api/v3/ticker/24hr?symbol=RVNUSDT",
+  },
+  {
+    name: "Binance public RVN/USDT ticker",
+    url: "https://api.binance.com/api/v3/ticker/24hr?symbol=RVNUSDT",
+  },
+];
 const RVN_EXPLORER = "https://api.ravencoinexplorer.com";
 
 async function fetchJson(url, timeoutMs = 7000) {
@@ -17,6 +26,18 @@ async function fetchJson(url, timeoutMs = 7000) {
   }
 }
 
+async function fetchFirstJson(sources) {
+  const failures = [];
+  for (const source of sources) {
+    try {
+      return { data: await fetchJson(source.url), source: source.name, failures };
+    } catch (error) {
+      failures.push(`${source.name}: ${String(error)}`);
+    }
+  }
+  throw new Error(failures.join("; "));
+}
+
 function finiteNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -24,9 +45,11 @@ function finiteNumber(value) {
 
 function sanitizePrice(raw) {
   if (!raw || typeof raw !== "object") return null;
+  const lastPrice = finiteNumber(raw.lastPrice);
+  if (lastPrice === null) return null;
   return {
     symbol: raw.symbol === "RVNUSDT" ? raw.symbol : "RVNUSDT",
-    last_price: finiteNumber(raw.lastPrice),
+    last_price: lastPrice,
     price_change_percent: finiteNumber(raw.priceChangePercent),
     high_24h: finiteNumber(raw.highPrice),
     low_24h: finiteNumber(raw.lowPrice),
@@ -69,22 +92,26 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: "method not allowed" });
   }
 
-  res.setHeader("Cache-Control", "public, s-maxage=10, stale-while-revalidate=30");
+  // Keep the public demo responsive while avoiding a function invocation on
+  // every browser paint. A viewer refreshes every 10 seconds; the CDN may
+  // reuse a response for at most five seconds.
+  res.setHeader("Cache-Control", "public, s-maxage=5, stale-while-revalidate=5");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
 
   const requests = await Promise.allSettled([
-    fetchJson(BINANCE_TICKER),
+    fetchFirstJson(BINANCE_TICKERS),
     fetchJson(`${RVN_EXPLORER}/nodeinfo`),
     fetchJson(`${RVN_EXPLORER}/api/v1/blocks/latest?limit=8`),
   ]);
 
-  const price = requests[0].status === "fulfilled" ? sanitizePrice(requests[0].value) : null;
+  const priceResult = requests[0].status === "fulfilled" ? requests[0].value : null;
+  const price = priceResult ? sanitizePrice(priceResult.data) : null;
   const network = requests[1].status === "fulfilled" ? sanitizeNode(requests[1].value) : null;
   const recentBlocks = requests[2].status === "fulfilled" ? sanitizeBlocks(requests[2].value) : [];
 
   const sourceStatus = {
-    binance_rvnusdt: requests[0].status === "fulfilled" && price !== null,
+    binance_rvnusdt: price !== null,
     ravencoin_explorer_nodeinfo: requests[1].status === "fulfilled" && network !== null,
     ravencoin_explorer_blocks: requests[2].status === "fulfilled" && recentBlocks.length > 0,
   };
@@ -99,7 +126,8 @@ module.exports = async function handler(req, res) {
     },
     sources: {
       status: sourceStatus,
-      price: "Binance public RVN/USDT ticker",
+      price: priceResult ? priceResult.source : "Binance RVN/USDT public market data unavailable",
+      price_fallback_failures: priceResult ? priceResult.failures : [],
       chain: "RavencoinExplorer.com public API",
     },
     node_specific_data: {
