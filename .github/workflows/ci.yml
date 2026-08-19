@@ -63,6 +63,20 @@ jobs:
           grep -q "not connected to a private Ravencoin Core or ElectrumX" api/demo-data.js
           grep -q "data-api.binance.vision" api/demo-data.js
           grep -q "data-api.binance.vision" api/demo-history.js
+      - name: Validate embedded Ravencoin PNG icon
+        run: |
+          python - <<'PY'
+          import base64
+          import pathlib
+          import re
+
+          html = pathlib.Path("demo/index.html").read_text(encoding="utf-8")
+          match = re.search(r'class="brand-icon"[^>]+src="data:image/png;base64,([^"]+)"', html)
+          assert match, "brand icon data URI missing"
+          raw = base64.b64decode(match.group(1), validate=True)
+          assert raw.startswith(b"\x89PNG\r\n\x1a\n"), "brand icon is not a valid PNG"
+          assert len(raw) > 1000, "brand icon PNG unexpectedly small"
+          PY
 
   docker-build:
     runs-on: ubuntu-latest
