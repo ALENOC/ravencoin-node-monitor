@@ -1,10 +1,13 @@
 """End-to-end tests against a real ThreadingHTTPServer instance (the actual
 Handler class, not a mock) - the only way to genuinely verify routing,
-path-traversal defenses, and status codes match what a browser would see.
+path-traversal defenses, Host-header policy, authentication, and status
+codes match what a browser would see.
 """
 
+import base64
 import json
 import os
+import re
 import threading
 import unittest
 import urllib.error
@@ -28,13 +31,26 @@ def start_server():
     return httpd, port
 
 
-def get(port, path):
+def request(port, path, headers=None):
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        headers=headers or {},
+    )
     try:
-        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5)
+        resp = urllib.request.urlopen(req, timeout=5)
         raw = resp.read()
-        return resp.status, raw.decode("utf-8", errors="replace")
+        return resp.status, raw.decode("utf-8", errors="replace"), dict(resp.headers)
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", errors="replace")
+        return (
+            exc.code,
+            exc.read().decode("utf-8", errors="replace"),
+            dict(exc.headers),
+        )
+
+
+def get(port, path):
+    status, body, _ = request(port, path)
+    return status, body
 
 
 class ServerTestCase(unittest.TestCase):
@@ -60,6 +76,75 @@ class RoutingSecurityTests(ServerTestCase):
         status, body = get(self.port, "/")
         self.assertEqual(status, 200)
         self.assertIn("<html", body.lower())
+
+    def test_security_headers_and_nonce_csp(self):
+        status, body, headers = request(self.port, "/")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(headers.get("Referrer-Policy"), "no-referrer")
+        csp = headers.get("Content-Security-Policy", "")
+        match = re.search(r'<script nonce="([^"]+)">', body)
+        self.assertIsNotNone(match)
+        self.assertIn(f"script-src 'nonce-{match.group(1)}'", csp)
+        script_directive = next(part for part in csp.split(";") if "script-src" in part)
+        self.assertNotIn("'unsafe-inline'", script_directive)
+
+    def test_untrusted_hostname_rejected_to_block_dns_rebinding(self):
+        status, body, _ = request(self.port, "/api/status", {"Host": "attacker.example"})
+        self.assertEqual(status, 421)
+        self.assertIn("untrusted Host", body)
+
+    def test_explicit_allowed_hostname_accepted(self):
+        old = server.cfg.monitor_allowed_hosts
+        server.cfg.monitor_allowed_hosts = "node.example"
+        try:
+            status, _, _ = request(self.port, "/api/status", {"Host": "node.example"})
+            self.assertEqual(status, 200)
+        finally:
+            server.cfg.monitor_allowed_hosts = old
+
+    def test_optional_basic_auth_protects_data_endpoints(self):
+        old_user = server.cfg.monitor_user
+        old_password = server.cfg.monitor_password
+        server.cfg.monitor_user = "alice"
+        server.cfg.monitor_password = "correct horse battery staple"
+        try:
+            status, _, headers = request(self.port, "/api/status")
+            self.assertEqual(status, 401)
+            self.assertIn("Basic", headers.get("WWW-Authenticate", ""))
+
+            token = base64.b64encode(b"alice:correct horse battery staple").decode()
+            status, _, _ = request(
+                self.port,
+                "/api/status",
+                {"Authorization": f"Basic {token}"},
+            )
+            self.assertEqual(status, 200)
+
+            # Liveness/readiness remain usable by Docker/orchestrators.
+            status, _, _ = request(self.port, "/healthz")
+            self.assertEqual(status, 200)
+        finally:
+            server.cfg.monitor_user = old_user
+            server.cfg.monitor_password = old_password
+
+    def test_wrong_basic_auth_rejected(self):
+        old_user = server.cfg.monitor_user
+        old_password = server.cfg.monitor_password
+        server.cfg.monitor_user = "monitor"
+        server.cfg.monitor_password = "secret"
+        try:
+            token = base64.b64encode(b"monitor:wrong").decode()
+            status, _, _ = request(
+                self.port,
+                "/metrics",
+                {"Authorization": f"Basic {token}"},
+            )
+            self.assertEqual(status, 401)
+        finally:
+            server.cfg.monitor_user = old_user
+            server.cfg.monitor_password = old_password
 
     def test_unknown_path_is_plain_404_no_traceback_leak(self):
         status, body = get(self.port, "/nope-does-not-exist")
@@ -129,6 +214,7 @@ class RoutingSecurityTests(ServerTestCase):
         self.assertNotIn("rpcpassword", lowered)
         self.assertNotIn("core_password", lowered)
         self.assertNotIn("core_user", lowered)
+        self.assertNotIn("monitor_password", lowered)
         self.assertNotIn("webhook_url", lowered.replace("alert_webhook_configured", ""))
 
 

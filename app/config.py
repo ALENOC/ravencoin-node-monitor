@@ -47,6 +47,15 @@ class Config:
     bind_port: int = 8899
     poll_interval: int = 10
 
+    # HTTP access hardening. Private/loopback IP Host headers and localhost
+    # are accepted automatically; DNS/reverse-proxy names must be listed in
+    # monitor_allowed_hosts. Setting monitor_password enables HTTP Basic auth
+    # for the dashboard and data endpoints (/healthz and /readyz stay public
+    # so orchestrator probes do not need credentials).
+    monitor_allowed_hosts: str = ""
+    monitor_user: str = "monitor"
+    monitor_password: str = None
+
     core_host: str = "127.0.0.1"
     core_port: int = 8766
     core_user: str = None
@@ -118,6 +127,9 @@ def load() -> Config:
         bind_host=_env("BIND_HOST", "0.0.0.0"),
         bind_port=_env_int("BIND_PORT", 8899),
         poll_interval=_env_int("POLL_INTERVAL", 10),
+        monitor_allowed_hosts=_env("MONITOR_ALLOWED_HOSTS", ""),
+        monitor_user=_env("MONITOR_USER", "monitor"),
+        monitor_password=_secret("MONITOR_PASSWORD"),
         core_host=_env("CORE_RPC_HOST", "127.0.0.1"),
         core_port=_env_int("CORE_RPC_PORT", 8766),
         core_user=_secret("CORE_RPC_USER"),

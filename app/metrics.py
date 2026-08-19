@@ -20,6 +20,32 @@ def render(snapshot):
     peers = snapshot.get("peers")
     _gauge(lines, "ravencoin_peer_count", len(peers) if peers is not None else None, "Connected P2P peers")
 
+    traffic = snapshot.get("network_traffic") or {}
+    _gauge(
+        lines,
+        "ravencoin_p2p_download_bytes_per_second",
+        traffic.get("download_bytes_per_second"),
+        "Current Ravencoin Core P2P receive rate in bytes per second",
+    )
+    _gauge(
+        lines,
+        "ravencoin_p2p_upload_bytes_per_second",
+        traffic.get("upload_bytes_per_second"),
+        "Current Ravencoin Core P2P send rate in bytes per second",
+    )
+    _gauge(
+        lines,
+        "ravencoin_p2p_bytes_received_total",
+        traffic.get("total_bytes_received"),
+        "Ravencoin Core P2P bytes received since Core start",
+    )
+    _gauge(
+        lines,
+        "ravencoin_p2p_bytes_sent_total",
+        traffic.get("total_bytes_sent"),
+        "Ravencoin Core P2P bytes sent since Core start",
+    )
+
     mempool = snapshot.get("mempool") or {}
     _gauge(lines, "ravencoin_mempool_transactions", mempool.get("size"), "Mempool transaction count")
 

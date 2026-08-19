@@ -63,6 +63,19 @@ def synced_core(height=1000, connections=8):
         "version": 4080000, "subversion": "/Ravencoin:4.8.0/", "protocolversion": 70028,
         "connections": connections,
     })
+    core.set("getnettotals", {
+        "totalbytesrecv": 250_000_000,
+        "totalbytessent": 125_000_000,
+        "timemillis": int(time.time() * 1000),
+        "uploadtarget": {
+            "timeframe": 86400,
+            "target": 0,
+            "target_reached": False,
+            "serve_historical_blocks": True,
+            "bytes_left_in_cycle": 0,
+            "time_left_in_cycle": 0,
+        },
+    })
     core.set("getmempoolinfo", {"size": 0, "bytes": 0, "mempoolminfee": 0.0})
     core.set("getrawmempool", lambda params: {})
     core.set("getpeerinfo", lambda params: [

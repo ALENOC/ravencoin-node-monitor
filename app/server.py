@@ -8,10 +8,15 @@ internet) is the operator's responsibility: bind it to a LAN interface,
 or front it with your own reverse proxy / firewall rule. See README.md.
 """
 
+import base64
+import binascii
+import hmac
+import ipaddress
 import json
 import mimetypes
 import os
 import re
+import secrets
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,10 +69,6 @@ def price_loop():
             price = price_client.fetch_price(cfg.price_feed_symbol)
             with _state_lock:
                 _state["price"] = price
-            # This loop already runs at its own sensible cadence
-            # (PRICE_POLL_INTERVAL), so each successful fetch is sampled
-            # directly - no need to also gate it behind the main
-            # collector's history-sampling interval.
             if mon_state.history is not None and price.get("last_price") is not None:
                 mon_state.history.insert_sample({"price_rvn_usdt": price["last_price"]})
         except Exception as exc:  # noqa: BLE001 - never let this kill the thread
@@ -116,9 +117,11 @@ def _diagnostics_snapshot():
             "chain_stale_warning_seconds": cfg.chain_stale_warning_seconds,
             "chain_stale_critical_seconds": cfg.chain_stale_critical_seconds,
             "alert_webhook_configured": bool(cfg.alert_webhook_url),
+            "monitor_auth_configured": bool(cfg.monitor_password),
         },
         "peer_stats": snap.get("peer_stats"),
         "host": snap.get("host"),
+        "network_traffic": snap.get("network_traffic"),
         "electrumx": {
             "present": snap.get("electrumx") is not None,
             "info_version": ((snap.get("electrumx") or {}).get("info") or {}).get("version"),
@@ -129,11 +132,96 @@ def _diagnostics_snapshot():
     }
 
 
+def _normalize_host(value):
+    value = (value or "").strip()
+    if not value or any(ch in value for ch in "\r\n"):
+        return None
+    try:
+        parsed = urlsplit("//" + value)
+        _ = parsed.port
+    except ValueError:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    if parsed.path or parsed.query or parsed.fragment or not parsed.hostname:
+        return None
+    return parsed.hostname.lower().rstrip(".")
+
+
+def _host_is_allowed(host_header):
+    host = _normalize_host(host_header)
+    if host is None:
+        return False
+
+    explicitly_allowed = {
+        normalized
+        for item in (cfg.monitor_allowed_hosts or "").split(",")
+        if (normalized := _normalize_host(item.strip())) is not None
+    }
+    if host in explicitly_allowed:
+        return True
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
+def _auth_enabled():
+    return cfg.monitor_password not in (None, "")
+
+
+def _authorization_ok(header):
+    if not _auth_enabled():
+        return True
+    if not header or not header.startswith("Basic "):
+        return False
+    token = header[6:].strip()
+    try:
+        decoded = base64.b64decode(token, validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return False
+    user, sep, password = decoded.partition(":")
+    if not sep:
+        return False
+    expected_user = cfg.monitor_user or "monitor"
+    return hmac.compare_digest(user.encode(), expected_user.encode()) and hmac.compare_digest(
+        password.encode(), cfg.monitor_password.encode()
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = f"ravencoin-node-monitor/{APP_VERSION}"
+    sys_version = ""
 
     def log_message(self, fmt, *args):
         pass
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        nonce = getattr(self, "_csp_nonce", None)
+        if nonce:
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+                "object-src 'none'; form-action 'none'; img-src 'self' data:; "
+                "manifest-src 'self'; connect-src 'self'; font-src 'none'; "
+                f"script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'",
+            )
+        else:
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'",
+            )
+        super().end_headers()
 
     def _send_json(self, payload, code=200):
         body = json.dumps(payload).encode()
@@ -153,10 +241,31 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_unauthorized(self):
+        body = json.dumps({"error": "authentication required"}).encode()
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="Ravencoin Node Monitor", charset="UTF-8"')
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
+        self._csp_nonce = None
         parsed = urlsplit(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
+
+        if not _host_is_allowed(self.headers.get("Host")):
+            self._send_json({"error": "untrusted Host header"}, code=421)
+            return
+
+        if path not in ("/healthz", "/readyz") and not _authorization_ok(
+            self.headers.get("Authorization")
+        ):
+            self._send_unauthorized()
+            return
 
         if path in ("/api/status", "/api/status/"):
             with _state_lock:
@@ -253,7 +362,6 @@ class Handler(BaseHTTPRequestHandler):
         asset_match = STATIC_ASSET_RE.match(path)
         if asset_match:
             file_path = os.path.join(config.STATIC_DIR, asset_match.group(1))
-            # the regex already forbids "/" and "..", but confirm containment too
             if not os.path.abspath(file_path).startswith(os.path.abspath(config.STATIC_DIR) + os.sep):
                 self.send_response(404)
                 self.end_headers()
@@ -281,6 +389,29 @@ class Handler(BaseHTTPRequestHandler):
             except FileNotFoundError:
                 self._send_json({"error": "dashboard UI not found"}, code=500)
                 return
+
+            nonce = secrets.token_urlsafe(18)
+            marker = b"<script>"
+            if marker not in body:
+                self._send_json({"error": "dashboard UI script marker not found"}, code=500)
+                return
+
+            # Every inline script must carry the nonce. Limiting replacement
+            # to the first script would make the strict CSP silently block the
+            # dashboard's main application script.
+            nonce_tag = f'<script nonce="{nonce}">'.encode()
+            body = body.replace(marker, nonce_tag)
+
+            closing_body = b"</body>"
+            if closing_body not in body:
+                self._send_json({"error": "dashboard UI body marker not found"}, code=500)
+                return
+            traffic_script = (
+                f'<script nonce="{nonce}" src="/static/network-traffic.js"></script>\n'.encode()
+            )
+            body = body.replace(closing_body, traffic_script + closing_body, 1)
+
+            self._csp_nonce = nonce
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -288,6 +419,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+
         self.send_response(404)
         self.end_headers()
 
@@ -301,6 +433,8 @@ def main():
     print(f"ravencoin-node-monitor {APP_VERSION} listening on {cfg.bind_host}:{cfg.bind_port}")
     if cfg.history_enabled:
         print(f"history: storage={cfg.history_storage} sample_interval={cfg.history_sample_interval}s retention={cfg.history_retention_hours}h")
+    if _auth_enabled():
+        print(f"dashboard authentication: enabled (user={cfg.monitor_user or 'monitor'})")
     server.serve_forever()
 
 

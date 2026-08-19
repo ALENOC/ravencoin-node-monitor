@@ -1,0 +1,12 @@
+# The Vercel project is only the public demonstration. The real monitor
+# remains a Docker/Python application and is not part of the public deploy.
+app/
+tests/
+contrib/
+pictures/
+Dockerfile
+docker-compose.yml
+docker-compose.electrumx.example.yml
+.env
+.env.local
+.env.*.local

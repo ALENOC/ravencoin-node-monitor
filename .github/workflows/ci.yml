@@ -6,35 +6,64 @@ on:
   pull_request:
     branches: [main]
 
+# CI only needs to read repository contents. Keep the automatic GITHUB_TOKEN
+# read-only even if repository defaults become more permissive later.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Syntax check (all Python files, stdlib only)
         run: python -m py_compile app/*.py contrib/*.py
       - name: Static error check (undefined names, syntax errors)
         run: |
-          pip install ruff
+          python -m pip install --disable-pip-version-check "ruff==0.12.9"
           ruff check --select E9,F app contrib
 
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Run test suite (mocked Ravencoin Core, no live node required)
         run: python -m unittest discover -t . -s tests -p "test_*.py" -v
 
+  demo-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate Vercel demo JavaScript and config
+        run: |
+          node --check api/demo-data.js
+          node --check demo/app.js
+          python -m json.tool vercel.json >/dev/null
+      - name: Ensure public demo is unambiguously labelled
+        run: |
+          grep -q "PUBLIC DEMO" demo/index.html
+          grep -q "SIMULATED" demo/index.html
+          grep -q "NODE REQUIRED" demo/index.html
+          grep -q "not connected to a private Ravencoin Core or ElectrumX" api/demo-data.js
+
   docker-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Build image
         run: docker build -t ravencoin-node-monitor:ci .
       - name: Smoke test (starts, serves the dashboard page)
@@ -47,5 +76,6 @@ jobs:
           curl -sf -o /dev/null http://127.0.0.1:18899/api/status
           curl -sf -o /dev/null http://127.0.0.1:18899/healthz
           curl -sf -o /dev/null http://127.0.0.1:18899/metrics
+          curl -sf -o /dev/null http://127.0.0.1:18899/static/network-traffic.js
           docker logs ci-smoketest
           docker rm -f ci-smoketest

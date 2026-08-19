@@ -32,6 +32,8 @@ METRICS = (
     "mempool_tx_count",
     "mempool_size_bytes",
     "network_hashrate",
+    "network_download_bps",
+    "network_upload_bps",
     "rpc_latency_ms",
     "electrumx_height",
     "electrumx_clients",
