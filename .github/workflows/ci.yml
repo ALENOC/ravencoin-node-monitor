@@ -40,6 +40,24 @@ jobs:
       - name: Run test suite (mocked Ravencoin Core, no live node required)
         run: python -m unittest discover -t . -s tests -p "test_*.py" -v
 
+  demo-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate Vercel demo JavaScript and config
+        run: |
+          node --check api/demo-data.js
+          node --check demo/app.js
+          python -m json.tool vercel.json >/dev/null
+      - name: Ensure public demo is unambiguously labelled
+        run: |
+          grep -q "PUBLIC DEMO" demo/index.html
+          grep -q "SIMULATED" demo/index.html
+          grep -q "NODE REQUIRED" demo/index.html
+          grep -q "not connected to a private Ravencoin Core or ElectrumX" api/demo-data.js
+
   docker-build:
     runs-on: ubuntu-latest
     steps:
@@ -58,5 +76,6 @@ jobs:
           curl -sf -o /dev/null http://127.0.0.1:18899/api/status
           curl -sf -o /dev/null http://127.0.0.1:18899/healthz
           curl -sf -o /dev/null http://127.0.0.1:18899/metrics
+          curl -sf -o /dev/null http://127.0.0.1:18899/static/network-traffic.js
           docker logs ci-smoketest
           docker rm -f ci-smoketest
