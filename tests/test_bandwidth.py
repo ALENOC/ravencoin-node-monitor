@@ -1,4 +1,4 @@
-"""Tests for the optional bandwidth controller protocol without live Docker/tc."""
+"""Tests for the optional host-controller protocol without live Docker/tc."""
 
 import importlib.util
 import json
@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import bandwidth
 
@@ -51,6 +52,20 @@ class BandwidthClientTests(unittest.TestCase):
             self.assertEqual(server.request["core_bytes_per_second"], 1536 * 1024)
             self.assertEqual(server.request["electrumx_bytes_per_second"], 2 * 1024 * 1024)
 
+    def test_set_connection_limit_uses_fixed_protocol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "control.sock")
+            server = OneShotUnixServer(path, {"ok": True, "enabled": True})
+            server.start()
+            self.assertTrue(server.ready.wait(2))
+            response = bandwidth.set_connection_limit(path, "core", 80)
+            server.join(2)
+            self.assertTrue(response["ok"])
+            self.assertEqual(
+                server.request,
+                {"action": "set_connection_limit", "service": "core", "limit": 80},
+            )
+
     def test_helper_error_is_not_silently_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "control.sock")
@@ -70,6 +85,9 @@ class HostControllerValidationTests(unittest.TestCase):
         cls.controller = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.controller)
 
+    def setUp(self):
+        self.controller._state = self.controller._default_state()
+
     def test_rate_arg_is_exact_bits_per_second(self):
         self.assertEqual(self.controller._rate_arg(1024), "8192bit")
         self.assertEqual(self.controller._rate_arg(2 * 1024 * 1024), "16777216bit")
@@ -81,6 +99,45 @@ class HostControllerValidationTests(unittest.TestCase):
         for bad in (-1, 1.5, True, "1000"):
             with self.assertRaises(ValueError):
                 self.controller._validated_limit({"x": bad}, "x", current)
+
+    def test_zero_connection_limit_means_deployment_default(self):
+        state = self.controller._default_state()
+        self.assertEqual(state["core_max_peers"], 0)
+        self.assertEqual(state["electrumx_max_sessions"], 0)
+
+    def test_core_override_preserves_existing_args_and_replaces_only_maxconnections(self):
+        state = self.controller._default_state()
+        state["core_max_peers"] = 75
+        state["core_base_args"] = ["-foo=bar", "-maxconnections=999"]
+        context = {"service_name": "ravencoin-core"}
+        rendered = self.controller._render_connection_override("core", context, state)
+        self.assertIn('"-foo=bar"', rendered)
+        self.assertIn('"-maxconnections=75"', rendered)
+        self.assertNotIn("999", rendered)
+
+    def test_electrumx_override_uses_native_max_sessions(self):
+        state = self.controller._default_state()
+        state["electrumx_max_sessions"] = 250
+        context = {"service_name": "electrumx"}
+        rendered = self.controller._render_connection_override("electrumx", context, state)
+        self.assertIn("MAX_SESSIONS", rendered)
+        self.assertIn('"250"', rendered)
+
+    def test_connection_action_rejects_extra_fields(self):
+        response = self.controller._handle(
+            {"action": "set_connection_limit", "service": "core", "limit": 80, "command": "rm -rf /"}
+        )
+        self.assertFalse(response["ok"])
+        self.assertIn("only service and limit", response["error"])
+
+    def test_connection_action_dispatches_only_valid_service_and_limit(self):
+        with mock.patch.object(self.controller, "_apply_connection_limit") as apply:
+            with mock.patch.object(self.controller, "_snapshot", return_value={"ok": True}):
+                response = self.controller._handle(
+                    {"action": "set_connection_limit", "service": "electrumx", "limit": 300}
+                )
+        self.assertTrue(response["ok"])
+        apply.assert_called_once_with("electrumx", 300)
 
 
 if __name__ == "__main__":

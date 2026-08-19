@@ -26,7 +26,9 @@ jobs:
           python -m pip install --disable-pip-version-check "ruff==0.12.9"
           ruff check --select E9,F app contrib
       - name: Validate dashboard JavaScript syntax
-        run: node --check app/static/network-traffic.js
+        run: |
+          node --check app/static/network-traffic.js
+          node --check app/static/connection-control.js
 
   test:
     runs-on: ubuntu-latest
@@ -99,5 +101,6 @@ jobs:
           curl -sf -o /dev/null http://127.0.0.1:18899/healthz
           curl -sf -o /dev/null http://127.0.0.1:18899/metrics
           curl -sf -o /dev/null http://127.0.0.1:18899/static/network-traffic.js
+          curl -sf -o /dev/null http://127.0.0.1:18899/static/connection-control.js
           docker logs ci-smoketest
           docker rm -f ci-smoketest

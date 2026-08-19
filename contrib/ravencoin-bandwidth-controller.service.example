@@ -1,5 +1,5 @@
 [Unit]
-Description=Ravencoin Node Monitor bandwidth controller
+Description=Ravencoin Node Monitor host controller
 After=docker.service
 Wants=docker.service
 
@@ -15,13 +15,18 @@ Environment=BANDWIDTH_STATE_FILE=/var/lib/ravencoin-bandwidth/limits.json
 Environment=BANDWIDTH_SOCKET_GID=10001
 Environment=RAVENCOIN_CORE_CONTAINER=electrumx-ravencoin-core-1
 Environment=ELECTRUMX_CONTAINER=electrumx-ravencoin-electrumx-1
+Environment=CONNECTION_RECONCILE_INTERVAL=30
+Environment=CONNECTION_COMPOSE_TIMEOUT=120
 RuntimeDirectory=ravencoin-bandwidth
 RuntimeDirectoryMode=0750
 StateDirectory=ravencoin-bandwidth
 StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectHome=true
+# Connection-limit changes use Docker Compose's own labels to rediscover the
+# original compose.yaml/override files. They may live under /home, so allow
+# read-only access while keeping the helper unable to modify home directories.
+ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

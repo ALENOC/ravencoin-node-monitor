@@ -1,9 +1,9 @@
-"""Client for the optional host-side bandwidth controller.
+"""Client for the optional host-side controller.
 
 The monitor container never receives CAP_NET_ADMIN or Docker socket access.
 Instead it talks to a tiny root-owned host helper over a Unix-domain socket.
 The helper exposes only a fixed JSON protocol for reading/applying Core and
-ElectrumX upload limits.
+ElectrumX upload and connection limits.
 """
 
 import json
@@ -32,26 +32,26 @@ def _request(socket_path, payload, timeout=2.0):
                 break
             total += len(chunk)
             if total > MAX_RESPONSE_BYTES:
-                raise BandwidthError("bandwidth helper response too large")
+                raise BandwidthError("host controller response too large")
             chunks.append(chunk)
             if b"\n" in chunk:
                 break
     except (OSError, socket.timeout) as exc:
-        raise BandwidthError(f"bandwidth helper unavailable: {exc}") from exc
+        raise BandwidthError(f"host controller unavailable: {exc}") from exc
     finally:
         sock.close()
 
     data = b"".join(chunks).split(b"\n", 1)[0]
     if not data:
-        raise BandwidthError("bandwidth helper returned an empty response")
+        raise BandwidthError("host controller returned an empty response")
     try:
         response = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise BandwidthError("bandwidth helper returned invalid JSON") from exc
+        raise BandwidthError("host controller returned invalid JSON") from exc
     if not isinstance(response, dict):
-        raise BandwidthError("bandwidth helper returned an invalid response")
+        raise BandwidthError("host controller returned an invalid response")
     if response.get("ok") is False:
-        raise BandwidthError(str(response.get("error") or "bandwidth helper rejected request"))
+        raise BandwidthError(str(response.get("error") or "host controller rejected request"))
     return response
 
 
@@ -66,6 +66,18 @@ def set_limits(socket_path, core_bytes_per_second, electrumx_bytes_per_second, t
             "action": "set",
             "core_bytes_per_second": core_bytes_per_second,
             "electrumx_bytes_per_second": electrumx_bytes_per_second,
+        },
+        timeout=timeout,
+    )
+
+
+def set_connection_limit(socket_path, service, limit, timeout=120.0):
+    return _request(
+        socket_path,
+        {
+            "action": "set_connection_limit",
+            "service": service,
+            "limit": limit,
         },
         timeout=timeout,
     )
