@@ -291,7 +291,8 @@ def _compose_context(service):
         path = os.path.realpath(path)
         if not os.path.isfile(path):
             raise RuntimeError(f"Docker Compose config file is unavailable: {path}")
-        config_files.append(path)
+        if path not in config_files:
+            config_files.append(path)
     if not config_files:
         raise RuntimeError("Docker Compose config-file list is empty")
     return {
@@ -375,10 +376,13 @@ def _compose_up(context, override_path):
         "--project-name", context["project_name"],
         "--project-directory", context["project_dir"],
     ]
-    for path in context["config_files"]:
+    files = list(context["config_files"])
+    override_real = os.path.realpath(override_path)
+    if override_real not in files:
+        files.append(override_real)
+    for path in files:
         argv.extend(["-f", path])
     argv.extend([
-        "-f", override_path,
         "up", "-d", "--no-deps", context["service_name"],
     ])
     _run(argv, timeout=COMPOSE_TIMEOUT, cwd=context["project_dir"])
@@ -397,16 +401,29 @@ def _apply_connection_limit(service, limit, persist=True):
     proposed[_connection_state_key(service)] = limit
 
     stable_path = _connection_override_path(service)
-    temp_path = stable_path + f".new.{os.getpid()}.{threading.get_ident()}"
+    previous = None
+    previous_exists = os.path.isfile(stable_path)
+    if previous_exists:
+        with open(stable_path, "rb") as handle:
+            previous = handle.read()
+    _write_private_file(stable_path, _render_connection_override(service, context, proposed))
     try:
-        _write_private_file(temp_path, _render_connection_override(service, context, proposed))
-        _compose_up(context, temp_path)
-        os.replace(temp_path, stable_path)
-    finally:
-        try:
-            os.unlink(temp_path)
-        except FileNotFoundError:
-            pass
+        _compose_up(context, stable_path)
+    except Exception:
+        if previous_exists:
+            temp_restore = stable_path + ".restore"
+            with open(temp_restore, "wb") as handle:
+                handle.write(previous)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp_restore, 0o600)
+            os.replace(temp_restore, stable_path)
+        else:
+            try:
+                os.unlink(stable_path)
+            except FileNotFoundError:
+                pass
+        raise
 
     _state.clear()
     _state.update(proposed)
