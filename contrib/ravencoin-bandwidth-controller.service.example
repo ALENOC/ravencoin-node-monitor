@@ -13,7 +13,7 @@ RestartSec=3
 Environment=BANDWIDTH_SOCKET_PATH=/run/ravencoin-bandwidth/control.sock
 Environment=BANDWIDTH_STATE_FILE=/var/lib/ravencoin-bandwidth/limits.json
 Environment=BANDWIDTH_SOCKET_GID=10001
-Environment=RAVENCOIN_CORE_CONTAINER=electrumx-ravencoin-core-1
+Environment=RAVENCOIN_CORE_CONTAINER=electrumx-ravencoin-ravencoin-core-1
 Environment=ELECTRUMX_CONTAINER=electrumx-ravencoin-electrumx-1
 Environment=CONNECTION_RECONCILE_INTERVAL=30
 Environment=CONNECTION_COMPOSE_TIMEOUT=120
