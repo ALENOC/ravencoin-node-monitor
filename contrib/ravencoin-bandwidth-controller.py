@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Minimal host-side upload shaper for ravencoin-node-monitor.
+"""Minimal host-side controller for ravencoin-node-monitor.
 
-This helper runs on the Docker host and owns the privileges required for
-Linux traffic control. The monitor container stays unprivileged: it receives
-neither CAP_NET_ADMIN nor the Docker socket and can only send a tiny fixed
-JSON protocol over a Unix-domain socket.
+The helper runs on the Docker host and owns the privileges required for Linux
+traffic control and narrowly-scoped Docker Compose service recreation.  The
+monitor container stays unprivileged: it receives neither CAP_NET_ADMIN nor
+the Docker socket and can only send a small fixed JSON protocol over a Unix
+socket.
 
-Limits are stored canonically as bytes/second. The dashboard may therefore
-accept B/s, KB/s, MB/s or GB/s (including decimal values) without changing
-the protocol or the shaping implementation. A value of 0 means unlimited.
-KB/MB/GB use powers of 1024 to match the dashboard's existing byte display.
+Upload limits are stored canonically as bytes/second.  Connection limits are
+stored as integers; 0 means "deployment default / unmanaged", never zero
+connections.  Core's max peers are applied as ``-maxconnections=N`` and
+ElectrumX's client limit as ``MAX_SESSIONS=N``.  Both are native settings of
+the existing applications; no Core or ElectrumX source modification is made.
 """
 
 import json
@@ -24,15 +26,19 @@ CORE_KEY = "core"
 ELECTRUMX_KEY = "electrumx"
 SERVICE_KEYS = (CORE_KEY, ELECTRUMX_KEY)
 MAX_REQUEST_BYTES = 16 * 1024
-UNLIMITED_RATE = "100gbit"  # effectively unlimited on a Raspberry Pi / home link
+UNLIMITED_RATE = "100gbit"
 PRIVATE_CIDRS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16")
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+COMPOSE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 IFACE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
+MAX_CONNECTION_LIMIT = 10_000
 
 SOCKET_PATH = os.environ.get("BANDWIDTH_SOCKET_PATH", "/run/ravencoin-bandwidth/control.sock")
 STATE_FILE = os.environ.get("BANDWIDTH_STATE_FILE", "/var/lib/ravencoin-bandwidth/limits.json")
 SOCKET_GID = int(os.environ.get("BANDWIDTH_SOCKET_GID", "10001"))
 APPLY_INTERVAL = max(2, int(os.environ.get("BANDWIDTH_APPLY_INTERVAL", "5")))
+CONNECTION_RECONCILE_INTERVAL = max(15, int(os.environ.get("CONNECTION_RECONCILE_INTERVAL", "30")))
+COMPOSE_TIMEOUT = max(30, int(os.environ.get("CONNECTION_COMPOSE_TIMEOUT", "120")))
 MAX_LIMIT_BYTES_PER_SECOND = max(
     1,
     int(os.environ.get("BANDWIDTH_MAX_BYTES_PER_SECOND", str(10 * 1024 * 1024 * 1024))),
@@ -49,11 +55,19 @@ for _name in CONTAINERS.values():
 _lock = threading.RLock()
 _applied = {}
 _samples = {}
+_last_connection_attempt = {}
 
 
-def _run(argv, check=True, timeout=5):
+def _run(argv, check=True, timeout=5, cwd=None):
     try:
-        proc = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=cwd,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"command failed: {argv[0]}: {exc}") from exc
     if check and proc.returncode != 0:
@@ -62,15 +76,26 @@ def _run(argv, check=True, timeout=5):
     return proc
 
 
+def _inspect_container(container):
+    proc = _run(["docker", "inspect", container])
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"docker inspect returned invalid JSON for {container}") from exc
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+        raise RuntimeError(f"docker inspect returned an unexpected result for {container}")
+    return payload[0]
+
+
 def _ns(pid, *argv, check=True):
     return _run(["nsenter", "-t", str(pid), "-n", "--", *argv], check=check)
 
 
 def _container_pid(container):
-    proc = _run(["docker", "inspect", "--format", "{{.State.Pid}}", container])
+    info = _inspect_container(container)
     try:
-        pid = int(proc.stdout.strip())
-    except ValueError as exc:
+        pid = int((info.get("State") or {}).get("Pid", 0))
+    except (TypeError, ValueError) as exc:
         raise RuntimeError(f"invalid PID returned for {container}") from exc
     if pid <= 1:
         raise RuntimeError(f"container {container} is not running")
@@ -113,8 +138,6 @@ def _apply_tc(pid, iface, limit_bytes_per_second):
     _ns(pid, "tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", "1:10", "htb", "rate", UNLIMITED_RATE, "ceil", UNLIMITED_RATE)
     _ns(pid, "tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", "1:20", "htb", "rate", rate, "ceil", rate, "burst", "64kb", "cburst", "64kb")
 
-    # Docker/LAN destinations remain effectively unlimited. Everything else
-    # falls into the default public class 1:20, which is what the UI controls.
     for priority, cidr in enumerate(PRIVATE_CIDRS, start=10):
         _ns(
             pid,
@@ -137,39 +160,58 @@ def _public_class_bytes(pid, iface):
     return int(sent.group(1)) if sent else None
 
 
+def _default_state():
+    return {
+        "core_bytes_per_second": 0,
+        "electrumx_bytes_per_second": 0,
+        "core_max_peers": 0,
+        "electrumx_max_sessions": 0,
+        "core_base_args": [],
+    }
+
+
 def _load_state():
-    default = {"core_bytes_per_second": 0, "electrumx_bytes_per_second": 0}
+    result = _default_state()
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as handle:
             raw = json.load(handle)
     except FileNotFoundError:
-        return default
+        return result
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         print(f"warning: ignoring invalid state file: {exc}", flush=True)
-        return default
+        return result
 
-    result = dict(default)
     if not isinstance(raw, dict):
         return result
     for service in SERVICE_KEYS:
         key = f"{service}_bytes_per_second"
         value = raw.get(key)
-        # One-way migration for early development builds that stored integer KB/s.
         if value is None and f"{service}_kbps" in raw:
             legacy = raw.get(f"{service}_kbps")
             value = legacy * 1024 if isinstance(legacy, int) and not isinstance(legacy, bool) else 0
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_LIMIT_BYTES_PER_SECOND:
             value = 0
         result[key] = value
+
+    for key in ("core_max_peers", "electrumx_max_sessions"):
+        value = raw.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_CONNECTION_LIMIT:
+            value = 0
+        result[key] = value
+
+    base_args = raw.get("core_base_args", [])
+    if isinstance(base_args, list) and all(isinstance(item, str) and len(item) <= 4096 for item in base_args):
+        result["core_base_args"] = base_args[:128]
     return result
 
 
-def _save_state():
+def _save_state(state=None):
+    state = _state if state is None else state
     directory = os.path.dirname(STATE_FILE)
     os.makedirs(directory, mode=0o700, exist_ok=True)
     temp_path = STATE_FILE + ".tmp"
     with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(_state, handle, sort_keys=True)
+        json.dump(state, handle, sort_keys=True)
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
@@ -226,6 +268,188 @@ def _service_status(service):
     return status
 
 
+def _compose_context(service):
+    info = _inspect_container(CONTAINERS[service])
+    labels = ((info.get("Config") or {}).get("Labels") or {})
+    service_name = labels.get("com.docker.compose.service")
+    project_name = labels.get("com.docker.compose.project")
+    project_dir = labels.get("com.docker.compose.project.working_dir")
+    config_files_raw = labels.get("com.docker.compose.project.config_files")
+    if not all(isinstance(value, str) and value for value in (service_name, project_name, project_dir, config_files_raw)):
+        raise RuntimeError("container is not a Docker Compose service with discoverable project metadata")
+    if not COMPOSE_NAME_RE.fullmatch(service_name) or not COMPOSE_NAME_RE.fullmatch(project_name):
+        raise RuntimeError("invalid Docker Compose project/service metadata")
+    if any(ch in project_dir for ch in "\r\n\x00") or not os.path.isdir(project_dir):
+        raise RuntimeError("Docker Compose project directory is unavailable to the controller")
+
+    config_files = []
+    for value in config_files_raw.split(","):
+        value = value.strip()
+        if not value or any(ch in value for ch in "\r\n\x00"):
+            raise RuntimeError("invalid Docker Compose config-file metadata")
+        path = value if os.path.isabs(value) else os.path.join(project_dir, value)
+        path = os.path.realpath(path)
+        if not os.path.isfile(path):
+            raise RuntimeError(f"Docker Compose config file is unavailable: {path}")
+        config_files.append(path)
+    if not config_files:
+        raise RuntimeError("Docker Compose config-file list is empty")
+    return {
+        "service_name": service_name,
+        "project_name": project_name,
+        "project_dir": project_dir,
+        "config_files": config_files,
+        "info": info,
+    }
+
+
+def _strip_core_maxconnections(args):
+    result = []
+    for arg in args or []:
+        if isinstance(arg, str) and not re.fullmatch(r"-maxconnections(?:=.*)?", arg):
+            result.append(arg)
+    return result
+
+
+def _running_connection_limit(service):
+    info = _inspect_container(CONTAINERS[service])
+    if service == CORE_KEY:
+        for arg in info.get("Args") or []:
+            if not isinstance(arg, str):
+                continue
+            match = re.fullmatch(r"-maxconnections=(\d+)", arg)
+            if match:
+                return int(match.group(1))
+        return None
+
+    for item in ((info.get("Config") or {}).get("Env") or []):
+        if isinstance(item, str) and item.startswith("MAX_SESSIONS="):
+            raw = item.split("=", 1)[1]
+            return int(raw) if raw.isdigit() else None
+    return None
+
+
+def _connection_state_key(service):
+    return "core_max_peers" if service == CORE_KEY else "electrumx_max_sessions"
+
+
+def _connection_override_path(service):
+    directory = os.path.dirname(STATE_FILE)
+    return os.path.join(directory, f"connection-{service}.override.yml")
+
+
+def _render_connection_override(service, context, state):
+    service_name = context["service_name"]
+    limit = state[_connection_state_key(service)]
+    lines = ["services:", f"  {service_name}:"]
+    if limit == 0:
+        lines[-1] += " {}"
+    elif service == CORE_KEY:
+        args = list(state.get("core_base_args") or [])
+        args = _strip_core_maxconnections(args)
+        args.append(f"-maxconnections={limit}")
+        lines.append("    command:")
+        for arg in args:
+            lines.append(f"      - {json.dumps(arg)}")
+    else:
+        lines.extend([
+            "    environment:",
+            f"      MAX_SESSIONS: {json.dumps(str(limit))}",
+        ])
+    return "\n".join(lines) + "\n"
+
+
+def _write_private_file(path, content):
+    directory = os.path.dirname(path)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(path, 0o600)
+
+
+def _compose_up(context, override_path):
+    argv = [
+        "docker", "compose",
+        "--project-name", context["project_name"],
+        "--project-directory", context["project_dir"],
+    ]
+    for path in context["config_files"]:
+        argv.extend(["-f", path])
+    argv.extend([
+        "-f", override_path,
+        "up", "-d", "--no-deps", context["service_name"],
+    ])
+    _run(argv, timeout=COMPOSE_TIMEOUT, cwd=context["project_dir"])
+
+
+def _apply_connection_limit(service, limit, persist=True):
+    if service not in SERVICE_KEYS:
+        raise ValueError("unknown service")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= MAX_CONNECTION_LIMIT:
+        raise ValueError(f"connection limit must be between 0 and {MAX_CONNECTION_LIMIT}")
+
+    context = _compose_context(service)
+    proposed = dict(_state)
+    if service == CORE_KEY and _state.get("core_max_peers", 0) == 0 and limit > 0:
+        proposed["core_base_args"] = _strip_core_maxconnections(context["info"].get("Args") or [])
+    proposed[_connection_state_key(service)] = limit
+
+    stable_path = _connection_override_path(service)
+    temp_path = stable_path + f".new.{os.getpid()}.{threading.get_ident()}"
+    try:
+        _write_private_file(temp_path, _render_connection_override(service, context, proposed))
+        _compose_up(context, temp_path)
+        os.replace(temp_path, stable_path)
+    finally:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+
+    _state.clear()
+    _state.update(proposed)
+    if persist:
+        _save_state()
+    _applied.pop(service, None)
+    _samples.pop(service, None)
+    return _connection_status(service)
+
+
+def _connection_status(service):
+    desired = _state[_connection_state_key(service)]
+    result = {
+        "container": CONTAINERS[service],
+        "configured_limit": desired,
+        "managed": desired > 0,
+        "running_limit": None,
+        "applied": desired == 0,
+        "compose_managed": False,
+        "restart_required": True,
+        "status": "unavailable",
+        "error": None,
+    }
+    try:
+        _compose_context(service)
+        result["compose_managed"] = True
+        running = _running_connection_limit(service)
+        result["running_limit"] = running
+        result["applied"] = True if desired == 0 else running == desired
+        result["status"] = "active"
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
+def _connections_snapshot():
+    return {
+        "max_limit": MAX_CONNECTION_LIMIT,
+        "zero_means": "deployment_default",
+        "services": {service: _connection_status(service) for service in SERVICE_KEYS},
+    }
+
+
 def _snapshot():
     return {
         "ok": True,
@@ -233,6 +457,7 @@ def _snapshot():
         "canonical_unit": "B/s",
         "max_bytes_per_second": MAX_LIMIT_BYTES_PER_SECOND,
         "services": {service: _service_status(service) for service in SERVICE_KEYS},
+        "connections": _connections_snapshot(),
     }
 
 
@@ -263,6 +488,20 @@ def _handle(payload):
             _state["core_bytes_per_second"] = core
             _state["electrumx_bytes_per_second"] = electrumx
             _save_state()
+            return _snapshot()
+        if action == "set_connection_limit":
+            if set(payload) != {"action", "service", "limit"}:
+                return {"ok": False, "error": "set_connection_limit accepts only service and limit"}
+            service = payload.get("service")
+            limit = payload.get("limit")
+            if service not in SERVICE_KEYS:
+                return {"ok": False, "error": "service must be core or electrumx"}
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= MAX_CONNECTION_LIMIT:
+                return {"ok": False, "error": f"limit must be an integer from 0 to {MAX_CONNECTION_LIMIT}"}
+            try:
+                _apply_connection_limit(service, limit)
+            except (RuntimeError, ValueError, OSError) as exc:
+                return {"ok": False, "error": str(exc)}
             return _snapshot()
     return {"ok": False, "error": "unknown action"}
 
@@ -299,7 +538,7 @@ def _prepare_socket_parent():
         pass
 
 
-def _reconcile_loop():
+def _reconcile_bandwidth_loop():
     while True:
         with _lock:
             for service in SERVICE_KEYS:
@@ -310,19 +549,47 @@ def _reconcile_loop():
         time.sleep(APPLY_INTERVAL)
 
 
+def _reconcile_connections_loop():
+    while True:
+        with _lock:
+            now = time.monotonic()
+            for service in SERVICE_KEYS:
+                desired = _state[_connection_state_key(service)]
+                if desired <= 0:
+                    continue
+                last = _last_connection_attempt.get(service, 0)
+                if now - last < CONNECTION_RECONCILE_INTERVAL:
+                    continue
+                try:
+                    running = _running_connection_limit(service)
+                except Exception:
+                    continue
+                if running == desired:
+                    continue
+                _last_connection_attempt[service] = now
+                try:
+                    _apply_connection_limit(service, desired)
+                    print(f"reapplied {service} connection limit {desired} after container recreation", flush=True)
+                except Exception as exc:
+                    print(f"warning: could not reapply {service} connection limit: {exc}", flush=True)
+        time.sleep(CONNECTION_RECONCILE_INTERVAL)
+
+
 def main():
     global _state
     _state = _load_state()
     _prepare_socket_parent()
     for binary in ("docker", "nsenter", "ip", "tc"):
         _run([binary, "--help"], check=False, timeout=3)
+    _run(["docker", "compose", "version"], timeout=10)
 
     server = ThreadingUnixServer(SOCKET_PATH, RequestHandler)
     os.chown(SOCKET_PATH, 0, SOCKET_GID)
     os.chmod(SOCKET_PATH, 0o660)
-    threading.Thread(target=_reconcile_loop, daemon=True, name="bandwidth-reconcile").start()
+    threading.Thread(target=_reconcile_bandwidth_loop, daemon=True, name="bandwidth-reconcile").start()
+    threading.Thread(target=_reconcile_connections_loop, daemon=True, name="connections-reconcile").start()
     print(
-        f"ravencoin bandwidth controller listening on {SOCKET_PATH}; "
+        f"ravencoin host controller listening on {SOCKET_PATH}; "
         f"Core={CONTAINERS[CORE_KEY]} ElectrumX={CONTAINERS[ELECTRUMX_KEY]}",
         flush=True,
     )
