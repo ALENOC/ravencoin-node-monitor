@@ -76,10 +76,6 @@ class Config:
     ex_ssl_port: int = 50002
     ex_ssl_sni: str = None
     ex_ssl_verify: bool = False
-    # Unverified TLS is automatically permitted only for local/private
-    # ElectrumX targets. This escape hatch is required to deliberately use
-    # CERT_NONE against a remote/FQDN target.
-    ex_allow_insecure_remote: bool = False
     # "rpc": call the admin RPC directly (needs ELECTRUMX_RPC_HOST reachable).
     # "file": read a JSON snapshot written by contrib/electrumx-admin-poller.py
     # - use this when the admin RPC is locked to 127.0.0.1 inside its own
@@ -149,7 +145,6 @@ def load() -> Config:
         ex_ssl_port=_env_int("ELECTRUMX_SSL_PORT", 50002),
         ex_ssl_sni=_env("ELECTRUMX_SSL_SNI", ex_ssl_host),
         ex_ssl_verify=_env_bool("ELECTRUMX_SSL_VERIFY", False),
-        ex_allow_insecure_remote=_env_bool("ELECTRUMX_ALLOW_INSECURE_REMOTE", False),
         ex_admin_source=_env("ELECTRUMX_ADMIN_SOURCE", "rpc").strip().lower(),
         ex_admin_file=_env("ELECTRUMX_ADMIN_FILE"),
         ex_admin_max_age=_env_int("ELECTRUMX_ADMIN_MAX_AGE", 60),
