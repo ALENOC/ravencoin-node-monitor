@@ -28,6 +28,32 @@ function setSource(id, ok) {
 }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
+function installGithubLink() {
+  const pill = $("live-pill");
+  if (!pill || $("github-repo-link")) return;
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.flexDirection = "column";
+  actions.style.alignItems = "flex-end";
+  actions.style.gap = "6px";
+  pill.parentNode.insertBefore(actions, pill);
+  actions.appendChild(pill);
+  const link = document.createElement("a");
+  link.id = "github-repo-link";
+  link.href = "https://github.com/ALENOC/ravencoin-node-monitor";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = "GitHub · Download / install ↗";
+  link.style.color = "var(--accent)";
+  link.style.fontSize = "12px";
+  link.style.fontWeight = "700";
+  link.style.textDecoration = "none";
+  link.style.padding = "0 4px";
+  link.addEventListener("mouseenter", () => { link.style.textDecoration = "underline"; });
+  link.addEventListener("mouseleave", () => { link.style.textDecoration = "none"; });
+  actions.appendChild(link);
+}
+
 function clearPrice() {
   for (const id of ["price", "price-high", "price-low", "price-volume"]) setText(id, "—");
   const change = $("price-change"); if (change) { change.textContent = ""; change.className = "change"; }
@@ -138,6 +164,7 @@ async function refresh() {
   }
 }
 
+installGithubLink();
 animateSimulatedTraffic(); setInterval(animateSimulatedTraffic, 1000);
 refresh(); refreshHistory(); setInterval(refresh, 10000); setInterval(refreshHistory, 60000);
 const rangeSelect = $("history-range"); if (rangeSelect) rangeSelect.addEventListener("change", refreshHistory);
