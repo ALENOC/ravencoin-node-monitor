@@ -92,10 +92,9 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: "method not allowed" });
   }
 
-  // Keep the public demo responsive while avoiding a function invocation on
-  // every browser paint. A viewer refreshes every 10 seconds; the CDN may
-  // reuse a response for at most five seconds.
-  res.setHeader("Cache-Control", "public, s-maxage=5, stale-while-revalidate=5");
+  // The demo is intentionally live: every browser poll reaches this function
+  // and obtains a fresh market-data response instead of a stale CDN object.
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
 
