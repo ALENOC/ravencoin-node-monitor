@@ -1,6 +1,6 @@
-# Optional overlay for live bandwidth controls.
+# Optional overlay for live bandwidth and connection-limit controls.
 # Use together with your normal docker-compose.yml / docker-compose.override.yml
-# after installing and starting the host-side bandwidth controller.
+# after installing and starting the host-side controller.
 services:
   monitor:
     environment:
