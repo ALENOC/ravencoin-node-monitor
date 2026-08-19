@@ -45,6 +45,31 @@
       .rvn-traffic-speed .label { color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
       .rvn-traffic-speed .value { margin-top:3px; font-size:22px; font-weight:750; font-variant-numeric:tabular-nums; }
       .rvn-traffic-note { color:var(--text-muted); font-size:11.5px; line-height:1.4; margin-top:10px; }
+
+      /* Demo-inspired flat dashboard layout for the real monitor. */
+      .grid.dashboard-demo-layout {
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        align-items:start;
+      }
+      .grid.dashboard-demo-layout > .card {
+        min-width:0;
+        grid-column:span 1;
+      }
+      .grid.dashboard-demo-layout > .card.layout-half {
+        grid-column:span 2;
+      }
+      .grid.dashboard-demo-layout > .card.layout-full {
+        grid-column:1 / -1;
+      }
+      @media (max-width:900px) {
+        .grid.dashboard-demo-layout { grid-template-columns:repeat(2,minmax(0,1fr)); }
+        .grid.dashboard-demo-layout > .card.layout-half,
+        .grid.dashboard-demo-layout > .card.layout-full { grid-column:1 / -1; }
+      }
+      @media (max-width:640px) {
+        .grid.dashboard-demo-layout { grid-template-columns:1fr; }
+        .grid.dashboard-demo-layout > .card { grid-column:1 / -1; }
+      }
       @media (max-width:480px) { .rvn-traffic-speeds { grid-template-columns:1fr; } }
     `;
     document.head.appendChild(style);
@@ -69,6 +94,65 @@
     `;
     compatibility.parentNode.insertBefore(card, compatibility);
     return true;
+  }
+
+  function cardFor(descendantId, cardId) {
+    const descendant = document.getElementById(descendantId);
+    const card = descendant && descendant.closest(".card");
+    if (card && cardId && !card.id) card.id = cardId;
+    return card;
+  }
+
+  function configureCard(card, width) {
+    if (!card) return null;
+    card.classList.remove("span-2", "span-full", "layout-half", "layout-full");
+    if (width === "half") card.classList.add("layout-half");
+    if (width === "full") card.classList.add("layout-full");
+    return card;
+  }
+
+  function installDemoLikeLayout() {
+    const grid = document.querySelector(".grid");
+    if (!grid || grid.classList.contains("dashboard-demo-layout")) return;
+
+    const cards = [
+      configureCard(document.getElementById("card-price"), "single"),
+      configureCard(cardFor("sync-blocks", "card-sync"), "single"),
+      configureCard(cardFor("p2p-connections", "card-p2p"), "single"),
+      configureCard(cardFor("mempool-count", "card-mempool"), "single"),
+
+      configureCard(cardFor("host-load", "card-host-resources"), "half"),
+      configureCard(cardFor("host-disk", "card-storage"), "half"),
+
+      configureCard(document.getElementById("card-network-traffic"), "full"),
+      configureCard(document.getElementById("card-charts"), "full"),
+
+      configureCard(cardFor("block-rows", "card-recent-blocks"), "half"),
+      configureCard(cardFor("mempool-tx-table", "card-mempool-transactions"), "half"),
+
+      configureCard(cardFor("peer-table", "card-network-peers"), "half"),
+      configureCard(document.getElementById("card-electrumx-clients"), "half"),
+
+      configureCard(cardFor("node-chain", "card-node"), "half"),
+      configureCard(document.getElementById("card-electrumx-server"), "half"),
+
+      configureCard(document.getElementById("card-events"), "half"),
+      configureCard(cardFor("banned-rows", "card-banned-peers"), "half"),
+
+      configureCard(document.getElementById("card-electrumx-checks"), "full"),
+    ].filter(Boolean);
+
+    for (const card of cards) grid.appendChild(card);
+
+    // The old dashboard grouped the lower cards into nested two-column
+    // wrappers. Once every known card has been moved into the flat grid,
+    // remove only wrappers that are genuinely empty so future unknown
+    // cards are never discarded.
+    grid.querySelectorAll(".two-col-section").forEach((section) => {
+      if (!section.querySelector(".card")) section.remove();
+    });
+
+    grid.classList.add("dashboard-demo-layout");
   }
 
   function render(traffic) {
@@ -112,6 +196,7 @@
 
   function start() {
     if (!installCard()) return;
+    installDemoLikeLayout();
     refreshTraffic();
     setInterval(refreshTraffic, 8000);
   }
