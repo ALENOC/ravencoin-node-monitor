@@ -44,7 +44,7 @@ MAX_LIMIT_BYTES_PER_SECOND = max(
     int(os.environ.get("BANDWIDTH_MAX_BYTES_PER_SECOND", str(10 * 1024 * 1024 * 1024))),
 )
 CONTAINERS = {
-    CORE_KEY: os.environ.get("RAVENCOIN_CORE_CONTAINER", "electrumx-ravencoin-core-1"),
+    CORE_KEY: os.environ.get("RAVENCOIN_CORE_CONTAINER", "electrumx-ravencoin-ravencoin-core-1"),
     ELECTRUMX_KEY: os.environ.get("ELECTRUMX_CONTAINER", "electrumx-ravencoin-electrumx-1"),
 }
 
@@ -129,8 +129,17 @@ def _our_qdisc_present(pid, iface):
 
 def _apply_tc(pid, iface, limit_bytes_per_second):
     existing = _root_qdisc(pid, iface)
-    if existing and "qdisc htb 1:" not in existing and "qdisc noqueue" not in existing:
+    ours = "qdisc htb 1:" in existing
+    if existing and not ours and "qdisc noqueue" not in existing:
         raise RuntimeError(f"refusing to replace an existing non-default root qdisc on {iface}: {existing}")
+
+    # tc's u32 filter "replace" is not reliably idempotent on every kernel:
+    # after the controller restarts, re-applying an already-present filter can
+    # fail with "Change operation not supported by specified qdisc".  If the
+    # root is ours (handle 1:), remove only that managed tree and recreate it
+    # from scratch.  Foreign/non-default qdiscs are still never overwritten.
+    if ours:
+        _ns(pid, "tc", "qdisc", "del", "dev", iface, "root")
 
     rate = _rate_arg(limit_bytes_per_second)
     _ns(pid, "tc", "qdisc", "replace", "dev", iface, "root", "handle", "1:", "htb", "default", "20")
@@ -141,7 +150,7 @@ def _apply_tc(pid, iface, limit_bytes_per_second):
     for priority, cidr in enumerate(PRIVATE_CIDRS, start=10):
         _ns(
             pid,
-            "tc", "filter", "replace", "dev", iface,
+            "tc", "filter", "add", "dev", iface,
             "protocol", "ip", "parent", "1:", "prio", str(priority),
             "u32", "match", "ip", "dst", cidr, "flowid", "1:10",
         )
