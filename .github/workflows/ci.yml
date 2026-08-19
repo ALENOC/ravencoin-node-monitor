@@ -6,8 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-# CI only needs to read repository contents. Keep the automatic GITHUB_TOKEN
-# read-only even if repository defaults become more permissive later.
 permissions:
   contents: read
 
@@ -49,14 +47,22 @@ jobs:
       - name: Validate Vercel demo JavaScript and config
         run: |
           node --check api/demo-data.js
+          node --check api/demo-history.js
           node --check demo/app.js
           python -m json.tool vercel.json >/dev/null
-      - name: Ensure public demo is unambiguously labelled
+      - name: Ensure public demo is complete and unambiguously labelled
         run: |
           grep -q "PUBLIC DEMO" demo/index.html
           grep -q "SIMULATED" demo/index.html
           grep -q "NODE REQUIRED" demo/index.html
+          grep -q ">History <" demo/index.html
+          grep -q ">Mempool <" demo/index.html
+          grep -q "Mempool transactions" demo/index.html
+          grep -q "history-canvas" demo/index.html
+          grep -q "brand-icon" demo/index.html
           grep -q "not connected to a private Ravencoin Core or ElectrumX" api/demo-data.js
+          grep -q "data-api.binance.vision" api/demo-data.js
+          grep -q "data-api.binance.vision" api/demo-history.js
 
   docker-build:
     runs-on: ubuntu-latest
