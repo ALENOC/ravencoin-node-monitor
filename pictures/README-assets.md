@@ -1,1 +1,0 @@
-The files in this directory named `dashboard-*.webp` are documentation screenshots used by the repository root README. `dashboard-peers-redacted.webp` has peer address values redacted before publication.
