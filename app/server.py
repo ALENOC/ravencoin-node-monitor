@@ -69,10 +69,6 @@ def price_loop():
             price = price_client.fetch_price(cfg.price_feed_symbol)
             with _state_lock:
                 _state["price"] = price
-            # This loop already runs at its own sensible cadence
-            # (PRICE_POLL_INTERVAL), so each successful fetch is sampled
-            # directly - no need to also gate it behind the main
-            # collector's history-sampling interval.
             if mon_state.history is not None and price.get("last_price") is not None:
                 mon_state.history.insert_sample({"price_rvn_usdt": price["last_price"]})
         except Exception as exc:  # noqa: BLE001 - never let this kill the thread
@@ -125,6 +121,7 @@ def _diagnostics_snapshot():
         },
         "peer_stats": snap.get("peer_stats"),
         "host": snap.get("host"),
+        "network_traffic": snap.get("network_traffic"),
         "electrumx": {
             "present": snap.get("electrumx") is not None,
             "info_version": ((snap.get("electrumx") or {}).get("info") or {}).get("version"),
@@ -136,18 +133,12 @@ def _diagnostics_snapshot():
 
 
 def _normalize_host(value):
-    """Return a normalized hostname from an HTTP Host-style value.
-
-    Reject userinfo, paths and malformed ports. This deliberately parses
-    syntactically only; no DNS lookup is performed as part of the trust
-    decision, so DNS rebinding cannot influence what is considered local.
-    """
     value = (value or "").strip()
     if not value or any(ch in value for ch in "\r\n"):
         return None
     try:
         parsed = urlsplit("//" + value)
-        _ = parsed.port  # force validation of a present port
+        _ = parsed.port
     except ValueError:
         return None
     if parsed.username is not None or parsed.password is not None:
@@ -175,9 +166,6 @@ def _host_is_allowed(host_header):
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        # DNS names are denied unless explicitly configured. That blocks
-        # attacker-controlled origins from using DNS rebinding to read the
-        # local dashboard/API through a victim's browser.
         return False
     return ip.is_loopback or ip.is_private or ip.is_link_local
 
@@ -213,9 +201,6 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def end_headers(self):
-        # These headers are applied to every response, including errors and
-        # static assets. The dashboard itself receives a per-response CSP
-        # nonce, so future accidental HTML injection cannot execute script.
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -276,9 +261,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "untrusted Host header"}, code=421)
             return
 
-        # Keep liveness/readiness probes credential-free. Everything that
-        # exposes node, peer, transaction, host or metric data is protected
-        # when MONITOR_PASSWORD is configured.
         if path not in ("/healthz", "/readyz") and not _authorization_ok(
             self.headers.get("Authorization")
         ):
@@ -380,7 +362,6 @@ class Handler(BaseHTTPRequestHandler):
         asset_match = STATIC_ASSET_RE.match(path)
         if asset_match:
             file_path = os.path.join(config.STATIC_DIR, asset_match.group(1))
-            # the regex already forbids "/" and "..", but confirm containment too
             if not os.path.abspath(file_path).startswith(os.path.abspath(config.STATIC_DIR) + os.sep):
                 self.send_response(404)
                 self.end_headers()
@@ -408,12 +389,28 @@ class Handler(BaseHTTPRequestHandler):
             except FileNotFoundError:
                 self._send_json({"error": "dashboard UI not found"}, code=500)
                 return
+
             nonce = secrets.token_urlsafe(18)
             marker = b"<script>"
             if marker not in body:
                 self._send_json({"error": "dashboard UI script marker not found"}, code=500)
                 return
-            body = body.replace(marker, f'<script nonce="{nonce}">'.encode(), 1)
+
+            # Every inline script must carry the nonce. Limiting replacement
+            # to the first script would make the strict CSP silently block the
+            # dashboard's main application script.
+            nonce_tag = f'<script nonce="{nonce}">'.encode()
+            body = body.replace(marker, nonce_tag)
+
+            closing_body = b"</body>"
+            if closing_body not in body:
+                self._send_json({"error": "dashboard UI body marker not found"}, code=500)
+                return
+            traffic_script = (
+                f'<script nonce="{nonce}" src="/static/network-traffic.js"></script>\n'.encode()
+            )
+            body = body.replace(closing_body, traffic_script + closing_body, 1)
+
             self._csp_nonce = nonce
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -422,6 +419,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+
         self.send_response(404)
         self.end_headers()
 
