@@ -22,6 +22,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+import bandwidth
 import collector
 import config
 import history as history_module
@@ -31,7 +32,7 @@ import privacy
 import rpc
 import state as state_module
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 TXID_RE = re.compile(r"^/api/tx/([0-9a-fA-F]{64})$")
 BLOCK_RE = re.compile(r"^/api/block/([0-9a-fA-F]{64})$")
@@ -39,6 +40,9 @@ HEX64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 STATIC_ASSET_RE = re.compile(r"^/static/([A-Za-z0-9_.-]+)$")
 
 MAX_EVENTS_RESPONSE = 500
+MAX_CONTROL_BODY_BYTES = 4096
+MAX_BANDWIDTH_BYTES_PER_SECOND = 100 * 1024 * 1024 * 1024
+CONTROL_HEADER = "X-Ravencoin-Monitor-Control"
 
 cfg = config.load()
 mon_state = state_module.MonitorState(cfg)
@@ -118,6 +122,7 @@ def _diagnostics_snapshot():
             "chain_stale_critical_seconds": cfg.chain_stale_critical_seconds,
             "alert_webhook_configured": bool(cfg.alert_webhook_url),
             "monitor_auth_configured": bool(cfg.monitor_password),
+            "bandwidth_control_enabled": bool(cfg.bandwidth_control_enabled),
         },
         "peer_stats": snap.get("peer_stats"),
         "host": snap.get("host"),
@@ -190,6 +195,42 @@ def _authorization_ok(header):
     expected_user = cfg.monitor_user or "monitor"
     return hmac.compare_digest(user.encode(), expected_user.encode()) and hmac.compare_digest(
         password.encode(), cfg.monitor_password.encode()
+    )
+
+
+def _bandwidth_status():
+    if not cfg.bandwidth_control_enabled:
+        return {
+            "ok": True,
+            "enabled": False,
+            "write_enabled": False,
+            "reason": "bandwidth control is disabled",
+            "services": {},
+        }
+    try:
+        payload = bandwidth.get_status(
+            cfg.bandwidth_control_socket,
+            timeout=cfg.bandwidth_control_timeout,
+        )
+    except bandwidth.BandwidthError as exc:
+        return {
+            "ok": False,
+            "enabled": True,
+            "write_enabled": _auth_enabled(),
+            "error": str(exc),
+            "services": {},
+        }
+    payload["write_enabled"] = _auth_enabled()
+    if not _auth_enabled():
+        payload["write_disabled_reason"] = "MONITOR_PASSWORD is required for bandwidth changes"
+    return payload
+
+
+def _valid_bandwidth_value(value):
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= MAX_BANDWIDTH_BYTES_PER_SECOND
     )
 
 
@@ -271,6 +312,10 @@ class Handler(BaseHTTPRequestHandler):
             with _state_lock:
                 payload = dict(_state)
             self._send_json(payload)
+            return
+
+        if path in ("/api/bandwidth", "/api/bandwidth/"):
+            self._send_json(_bandwidth_status())
             return
 
         if path == "/healthz":
@@ -377,7 +422,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type or "application/octet-stream")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "public, max-age=86400")
+            cache = "no-cache" if asset_match.group(1) == "network-traffic.js" else "public, max-age=86400"
+            self.send_header("Cache-Control", cache)
             self.end_headers()
             self.wfile.write(body)
             return
@@ -396,9 +442,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "dashboard UI script marker not found"}, code=500)
                 return
 
-            # Every inline script must carry the nonce. Limiting replacement
-            # to the first script would make the strict CSP silently block the
-            # dashboard's main application script.
             nonce_tag = f'<script nonce="{nonce}">'.encode()
             body = body.replace(marker, nonce_tag)
 
@@ -407,7 +450,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "dashboard UI body marker not found"}, code=500)
                 return
             traffic_script = (
-                f'<script nonce="{nonce}" src="/static/network-traffic.js"></script>\n'.encode()
+                f'<script nonce="{nonce}" src="/static/network-traffic.js?v={APP_VERSION}"></script>\n'.encode()
             )
             body = body.replace(closing_body, traffic_script + closing_body, 1)
 
@@ -423,6 +466,92 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
+    def do_POST(self):
+        self._csp_nonce = None
+        path = urlsplit(self.path).path
+
+        if not _host_is_allowed(self.headers.get("Host")):
+            self._send_json({"error": "untrusted Host header"}, code=421)
+            return
+        if path not in ("/api/bandwidth", "/api/bandwidth/"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        if not cfg.bandwidth_control_enabled:
+            self._send_json({"error": "bandwidth control is disabled"}, code=404)
+            return
+        if not _auth_enabled():
+            self._send_json({"error": "MONITOR_PASSWORD is required for bandwidth changes"}, code=403)
+            return
+        if not _authorization_ok(self.headers.get("Authorization")):
+            self._send_unauthorized()
+            return
+
+        # Requiring a non-simple custom header prevents a cross-origin HTML
+        # form from silently changing LAN limits with cached Basic credentials.
+        if self.headers.get(CONTROL_HEADER) != "1":
+            self._send_json({"error": f"missing required {CONTROL_HEADER} header"}, code=403)
+            return
+        content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self._send_json({"error": "Content-Type must be application/json"}, code=415)
+            return
+        if self.headers.get("Transfer-Encoding"):
+            self._send_json({"error": "chunked request bodies are not supported"}, code=400)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._send_json({"error": "invalid Content-Length"}, code=400)
+            return
+        if length <= 0 or length > MAX_CONTROL_BODY_BYTES:
+            self._send_json({"error": "request body is empty or too large"}, code=413)
+            return
+        raw = self.rfile.read(length)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json({"error": "invalid JSON"}, code=400)
+            return
+        if not isinstance(payload, dict):
+            self._send_json({"error": "request must be a JSON object"}, code=400)
+            return
+
+        allowed = {"core_bytes_per_second", "electrumx_bytes_per_second"}
+        if not payload or any(key not in allowed for key in payload):
+            self._send_json({"error": "only Core and ElectrumX upload limits may be changed"}, code=400)
+            return
+        for key, value in payload.items():
+            if not _valid_bandwidth_value(value):
+                self._send_json(
+                    {"error": f"{key} must be an integer from 0 to {MAX_BANDWIDTH_BYTES_PER_SECOND} bytes/second"},
+                    code=400,
+                )
+                return
+
+        current = _bandwidth_status()
+        services = current.get("services") or {}
+        core_current = ((services.get("core") or {}).get("limit_bytes_per_second"))
+        ex_current = ((services.get("electrumx") or {}).get("limit_bytes_per_second"))
+        if core_current is None or ex_current is None:
+            self._send_json({"error": current.get("error") or "bandwidth helper unavailable"}, code=503)
+            return
+
+        core_value = payload.get("core_bytes_per_second", core_current)
+        ex_value = payload.get("electrumx_bytes_per_second", ex_current)
+        try:
+            result = bandwidth.set_limits(
+                cfg.bandwidth_control_socket,
+                core_value,
+                ex_value,
+                timeout=cfg.bandwidth_control_timeout,
+            )
+        except bandwidth.BandwidthError as exc:
+            self._send_json({"error": str(exc)}, code=503)
+            return
+        result["write_enabled"] = True
+        self._send_json(result)
+
 
 def main():
     global _poll_thread
@@ -435,6 +564,8 @@ def main():
         print(f"history: storage={cfg.history_storage} sample_interval={cfg.history_sample_interval}s retention={cfg.history_retention_hours}h")
     if _auth_enabled():
         print(f"dashboard authentication: enabled (user={cfg.monitor_user or 'monitor'})")
+    if cfg.bandwidth_control_enabled:
+        print(f"bandwidth control: enabled via {cfg.bandwidth_control_socket}")
     server.serve_forever()
 
 
