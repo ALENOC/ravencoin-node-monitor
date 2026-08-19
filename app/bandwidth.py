@@ -59,13 +59,13 @@ def get_status(socket_path, timeout=2.0):
     return _request(socket_path, {"action": "status"}, timeout=timeout)
 
 
-def set_limits(socket_path, core_kbps, electrumx_kbps, timeout=2.0):
+def set_limits(socket_path, core_bytes_per_second, electrumx_bytes_per_second, timeout=2.0):
     return _request(
         socket_path,
         {
             "action": "set",
-            "core_kbps": core_kbps,
-            "electrumx_kbps": electrumx_kbps,
+            "core_bytes_per_second": core_bytes_per_second,
+            "electrumx_bytes_per_second": electrumx_bytes_per_second,
         },
         timeout=timeout,
     )
