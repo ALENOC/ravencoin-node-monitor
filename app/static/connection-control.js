@@ -3,6 +3,7 @@
 (function () {
   let maxLimit = 10000;
   let writeEnabled = false;
+  const NATIVE_DEFAULTS = { core: 125, electrumx: 1000 };
 
   function set(id, value) {
     const el = document.getElementById(id);
@@ -83,7 +84,7 @@
           <div class="connection-status" id="conn-electrumx-status">Loading...</div>
         </div>
       </div>
-      <div class="connection-note"><b>Connected now</b> is the live number of connections. <b>Current limit</b> is the limit currently active in the running service. <b>New limit</b> is the value to apply. Entering <b>0</b> removes the monitor override and restores the deployment's own default/configured value; it never means zero connections. Core uses native <code>-maxconnections</code>, while ElectrumX uses native <code>MAX_SESSIONS</code>. Applying a change restarts only the selected service, so its peers/clients disconnect briefly and reconnect normally.</div>
+      <div class="connection-note"><b>Connected now</b> is the live number of connections. <b>Current limit</b> is the limit currently active or, when no explicit deployment setting is present, the application's native default: Ravencoin Core <b>125 peers</b>, ElectrumX <b>1000 clients</b>. <b>New limit</b> is the value to apply. Entering <b>0</b> removes the monitor override and restores the deployment/native default; it never means zero connections. Core uses native <code>-maxconnections</code>, while ElectrumX uses native <code>MAX_SESSIONS</code>. Applying a change restarts only the selected service, so its peers/clients disconnect briefly and reconnect normally.</div>
     `;
 
     if (anchor.id === "card-charts") anchor.parentNode.insertBefore(card, anchor);
@@ -109,7 +110,8 @@
     }
     if (configured > 0 && data.applied === true) return `${configured.toLocaleString()} ${noun}`;
     if (configured > 0 && data.applied === false) return "Pending apply";
-    return "Deployment default";
+    const nativeDefault = NATIVE_DEFAULTS[service];
+    return `${nativeDefault.toLocaleString()} ${noun} · native default`;
   }
 
   function renderService(service, data) {
@@ -145,7 +147,9 @@
     } else if (data.running_limit !== null && data.running_limit !== undefined) {
       text = `Using deployment setting ${Number(data.running_limit).toLocaleString()}; monitor is not overriding it.`;
     } else {
-      text = "Using deployment default; monitor is not overriding it.";
+      const noun = service === "core" ? "peers" : "clients";
+      const nativeDefault = NATIVE_DEFAULTS[service];
+      text = `Using native default ${nativeDefault.toLocaleString()} ${noun}; monitor is not overriding it.`;
     }
 
     if (status) {
@@ -209,7 +213,10 @@
 
     const name = service === "core" ? "Ravencoin Core" : "ElectrumX";
     const noun = service === "core" ? "peers" : "clients";
-    const target = limit === 0 ? "the deployment default" : `${limit.toLocaleString()} maximum ${noun}`;
+    const defaultValue = NATIVE_DEFAULTS[service];
+    const target = limit === 0
+      ? `the deployment/native default (normally ${defaultValue.toLocaleString()} ${noun})`
+      : `${limit.toLocaleString()} maximum ${noun}`;
     const warning = `${name} must be restarted to apply ${target}. Current ${noun} will disconnect briefly.\n\nApply this change now?`;
     if (!window.confirm(warning)) return;
 
