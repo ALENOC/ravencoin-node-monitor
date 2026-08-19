@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Minimal host-side upload shaper for ravencoin-node-monitor.
 
-This helper is intentionally separate from the monitor container. It runs on
-the Docker host, owns CAP_NET_ADMIN/root privileges there, and exposes only a
-small Unix-socket JSON API. The dashboard never receives the Docker socket,
-CAP_NET_ADMIN, or an arbitrary command-execution primitive.
+This helper runs on the Docker host and owns the privileges required for
+Linux traffic control. The monitor container stays unprivileged: it receives
+neither CAP_NET_ADMIN nor the Docker socket and can only send a tiny fixed
+JSON protocol over a Unix-domain socket.
 
-Limits are expressed in KB/s (1 KB = 1024 bytes). A value of 0 means
-unlimited. Shaping is applied to the containers' default network interfaces
-with Linux HTB. RFC1918 destinations are put in an effectively-unlimited
-class so Core <-> ElectrumX / Docker-LAN traffic is not throttled; public
-outbound traffic uses the configured class.
+Limits are stored canonically as bytes/second. The dashboard may therefore
+accept B/s, KB/s, MB/s or GB/s (including decimal values) without changing
+the protocol or the shaping implementation. A value of 0 means unlimited.
+KB/MB/GB use powers of 1024 to match the dashboard's existing byte display.
 """
 
 import json
@@ -25,16 +24,19 @@ CORE_KEY = "core"
 ELECTRUMX_KEY = "electrumx"
 SERVICE_KEYS = (CORE_KEY, ELECTRUMX_KEY)
 MAX_REQUEST_BYTES = 16 * 1024
-UNLIMITED_RATE = "10gbit"
-PRIVATE_CIDRS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+UNLIMITED_RATE = "100gbit"  # effectively unlimited on a Raspberry Pi / home link
+PRIVATE_CIDRS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16")
 CONTAINER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 IFACE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
 
 SOCKET_PATH = os.environ.get("BANDWIDTH_SOCKET_PATH", "/run/ravencoin-bandwidth/control.sock")
 STATE_FILE = os.environ.get("BANDWIDTH_STATE_FILE", "/var/lib/ravencoin-bandwidth/limits.json")
-SOCKET_GID = int(os.environ.get("BANDWIDTH_SOCKET_GID", "1000"))
+SOCKET_GID = int(os.environ.get("BANDWIDTH_SOCKET_GID", "10001"))
 APPLY_INTERVAL = max(2, int(os.environ.get("BANDWIDTH_APPLY_INTERVAL", "5")))
-MAX_LIMIT_KBPS = max(1, int(os.environ.get("BANDWIDTH_MAX_KBPS", "1000000")))
+MAX_LIMIT_BYTES_PER_SECOND = max(
+    1,
+    int(os.environ.get("BANDWIDTH_MAX_BYTES_PER_SECOND", str(10 * 1024 * 1024 * 1024))),
+)
 CONTAINERS = {
     CORE_KEY: os.environ.get("RAVENCOIN_CORE_CONTAINER", "electrumx-ravencoin-core-1"),
     ELECTRUMX_KEY: os.environ.get("ELECTRUMX_CONTAINER", "electrumx-ravencoin-electrumx-1"),
@@ -51,13 +53,7 @@ _samples = {}
 
 def _run(argv, check=True, timeout=5):
     try:
-        proc = subprocess.run(
-            argv,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        proc = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"command failed: {argv[0]}: {exc}") from exc
     if check and proc.returncode != 0:
@@ -92,42 +88,43 @@ def _default_iface(pid):
     return iface
 
 
-def _rate_arg(limit_kbps):
-    if limit_kbps == 0:
+def _rate_arg(limit_bytes_per_second):
+    if limit_bytes_per_second == 0:
         return UNLIMITED_RATE
-    # User-facing KB/s uses 1024-byte kilobytes. tc accepts bit/s exactly.
-    return f"{limit_kbps * 1024 * 8}bit"
+    return f"{limit_bytes_per_second * 8}bit"
 
 
-def _apply_tc(pid, iface, limit_kbps):
-    rate = _rate_arg(limit_kbps)
+def _root_qdisc(pid, iface):
+    return _ns(pid, "tc", "qdisc", "show", "dev", iface).stdout.strip()
 
-    # Rebuild only our root qdisc when the requested setting or container PID
-    # changes. This makes the configuration deterministic and avoids stale
-    # filters after container recreation.
-    _ns(pid, "tc", "qdisc", "del", "dev", iface, "root", check=False)
-    _ns(pid, "tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "htb", "default", "20")
-    _ns(pid, "tc", "class", "add", "dev", iface, "parent", "1:", "classid", "1:1", "htb", "rate", UNLIMITED_RATE, "ceil", UNLIMITED_RATE)
-    _ns(pid, "tc", "class", "add", "dev", iface, "parent", "1:1", "classid", "1:10", "htb", "rate", UNLIMITED_RATE, "ceil", UNLIMITED_RATE)
-    _ns(pid, "tc", "class", "add", "dev", iface, "parent", "1:1", "classid", "1:20", "htb", "rate", rate, "ceil", rate, "burst", "64kb", "cburst", "64kb")
 
-    # Keep Docker/LAN traffic out of the public-rate class. Unclassified
-    # packets (including normal public IPv4/IPv6 traffic) use class 1:20.
+def _our_qdisc_present(pid, iface):
+    return "qdisc htb 1:" in _root_qdisc(pid, iface)
+
+
+def _apply_tc(pid, iface, limit_bytes_per_second):
+    existing = _root_qdisc(pid, iface)
+    if existing and "qdisc htb 1:" not in existing and "qdisc noqueue" not in existing:
+        raise RuntimeError(f"refusing to replace an existing non-default root qdisc on {iface}: {existing}")
+
+    rate = _rate_arg(limit_bytes_per_second)
+    _ns(pid, "tc", "qdisc", "replace", "dev", iface, "root", "handle", "1:", "htb", "default", "20")
+    _ns(pid, "tc", "class", "replace", "dev", iface, "parent", "1:", "classid", "1:1", "htb", "rate", UNLIMITED_RATE, "ceil", UNLIMITED_RATE)
+    _ns(pid, "tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", "1:10", "htb", "rate", UNLIMITED_RATE, "ceil", UNLIMITED_RATE)
+    _ns(pid, "tc", "class", "replace", "dev", iface, "parent", "1:1", "classid", "1:20", "htb", "rate", rate, "ceil", rate, "burst", "64kb", "cburst", "64kb")
+
+    # Docker/LAN destinations remain effectively unlimited. Everything else
+    # falls into the default public class 1:20, which is what the UI controls.
     for priority, cidr in enumerate(PRIVATE_CIDRS, start=10):
         _ns(
             pid,
-            "tc", "filter", "add", "dev", iface,
+            "tc", "filter", "replace", "dev", iface,
             "protocol", "ip", "parent", "1:", "prio", str(priority),
             "u32", "match", "ip", "dst", cidr, "flowid", "1:10",
         )
 
 
-def _qdisc_present(pid, iface):
-    proc = _ns(pid, "tc", "qdisc", "show", "dev", iface)
-    return "htb 1:" in proc.stdout
-
-
-def _class_bytes(pid, iface):
+def _public_class_bytes(pid, iface):
     proc = _ns(pid, "tc", "-s", "class", "show", "dev", iface)
     match = re.search(
         r"class\s+htb\s+1:20\b(?P<body>.*?)(?=\nclass\s+htb\s+|\Z)",
@@ -141,7 +138,7 @@ def _class_bytes(pid, iface):
 
 
 def _load_state():
-    default = {"core_kbps": 0, "electrumx_kbps": 0}
+    default = {"core_bytes_per_second": 0, "electrumx_bytes_per_second": 0}
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as handle:
             raw = json.load(handle)
@@ -152,10 +149,16 @@ def _load_state():
         return default
 
     result = dict(default)
-    for key in result:
-        value = raw.get(key, 0) if isinstance(raw, dict) else 0
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_LIMIT_KBPS:
-            print(f"warning: ignoring invalid {key} in state file", flush=True)
+    if not isinstance(raw, dict):
+        return result
+    for service in SERVICE_KEYS:
+        key = f"{service}_bytes_per_second"
+        value = raw.get(key)
+        # One-way migration for early development builds that stored integer KB/s.
+        if value is None and f"{service}_kbps" in raw:
+            legacy = raw.get(f"{service}_kbps")
+            value = legacy * 1024 if isinstance(legacy, int) and not isinstance(legacy, bool) else 0
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_LIMIT_BYTES_PER_SECOND:
             value = 0
         result[key] = value
     return result
@@ -175,7 +178,7 @@ def _save_state():
 
 
 def _limit_for(service):
-    return _state[f"{service}_kbps"]
+    return _state[f"{service}_bytes_per_second"]
 
 
 def _ensure_service(service):
@@ -184,9 +187,7 @@ def _ensure_service(service):
     pid = _container_pid(container)
     iface = _default_iface(pid)
     desired = (pid, iface, limit)
-    current = _applied.get(service)
-
-    if current != desired or not _qdisc_present(pid, iface):
+    if _applied.get(service) != desired or not _our_qdisc_present(pid, iface):
         _apply_tc(pid, iface, limit)
         _applied[service] = desired
         _samples.pop(service, None)
@@ -198,16 +199,15 @@ def _service_status(service):
     limit = _limit_for(service)
     status = {
         "container": container,
-        "limit_kbps": limit,
+        "limit_bytes_per_second": limit,
         "limited": limit > 0,
-        "unit": "KB/s",
         "status": "unavailable",
         "upload_bytes_per_second": None,
         "error": None,
     }
     try:
         pid, iface = _ensure_service(service)
-        sent_bytes = _class_bytes(pid, iface)
+        sent_bytes = _public_class_bytes(pid, iface)
         now = time.monotonic()
         previous = _samples.get(service)
         rate = None
@@ -218,13 +218,8 @@ def _service_status(service):
                 rate = (sent_bytes - prev_bytes) / elapsed
         if sent_bytes is not None:
             _samples[service] = (sent_bytes, now, pid)
-        status.update({
-            "status": "active",
-            "pid": pid,
-            "interface": iface,
-            "upload_bytes_per_second": rate,
-        })
-    except Exception as exc:  # service state is reported, not fatal to helper
+        status.update({"status": "active", "pid": pid, "interface": iface, "upload_bytes_per_second": rate})
+    except Exception as exc:
         _applied.pop(service, None)
         _samples.pop(service, None)
         status["error"] = str(exc)
@@ -235,12 +230,9 @@ def _snapshot():
     return {
         "ok": True,
         "enabled": True,
-        "unit": "KB/s",
-        "max_kbps": MAX_LIMIT_KBPS,
-        "services": {
-            CORE_KEY: _service_status(CORE_KEY),
-            ELECTRUMX_KEY: _service_status(ELECTRUMX_KEY),
-        },
+        "canonical_unit": "B/s",
+        "max_bytes_per_second": MAX_LIMIT_BYTES_PER_SECOND,
+        "services": {service: _service_status(service) for service in SERVICE_KEYS},
     }
 
 
@@ -249,9 +241,9 @@ def _validated_limit(payload, key, current):
         return current
     value = payload[key]
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{key} must be an integer KB/s value")
-    if not 0 <= value <= MAX_LIMIT_KBPS:
-        raise ValueError(f"{key} must be between 0 and {MAX_LIMIT_KBPS} KB/s")
+        raise ValueError(f"{key} must be an integer number of bytes/second")
+    if not 0 <= value <= MAX_LIMIT_BYTES_PER_SECOND:
+        raise ValueError(f"{key} must be between 0 and {MAX_LIMIT_BYTES_PER_SECOND} bytes/second")
     return value
 
 
@@ -264,15 +256,13 @@ def _handle(payload):
             return _snapshot()
         if action == "set":
             try:
-                core = _validated_limit(payload, "core_kbps", _state["core_kbps"])
-                electrumx = _validated_limit(payload, "electrumx_kbps", _state["electrumx_kbps"])
+                core = _validated_limit(payload, "core_bytes_per_second", _state["core_bytes_per_second"])
+                electrumx = _validated_limit(payload, "electrumx_bytes_per_second", _state["electrumx_bytes_per_second"])
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
-            _state["core_kbps"] = core
-            _state["electrumx_kbps"] = electrumx
+            _state["core_bytes_per_second"] = core
+            _state["electrumx_bytes_per_second"] = electrumx
             _save_state()
-            # Apply immediately; unavailable containers remain persisted and the
-            # background reconciler will apply the setting when they return.
             return _snapshot()
     return {"ok": False, "error": "unknown action"}
 
@@ -324,16 +314,12 @@ def main():
     global _state
     _state = _load_state()
     _prepare_socket_parent()
-
-    # Fail early with a useful error rather than silently running without the
-    # host tools required to enforce limits.
     for binary in ("docker", "nsenter", "ip", "tc"):
         _run([binary, "--help"], check=False, timeout=3)
 
     server = ThreadingUnixServer(SOCKET_PATH, RequestHandler)
     os.chown(SOCKET_PATH, 0, SOCKET_GID)
     os.chmod(SOCKET_PATH, 0o660)
-
     threading.Thread(target=_reconcile_loop, daemon=True, name="bandwidth-reconcile").start()
     print(
         f"ravencoin bandwidth controller listening on {SOCKET_PATH}; "
