@@ -61,7 +61,7 @@ sudo systemctl status --no-pager ravencoin-bandwidth-controller.service
 The example unit targets these container names by default:
 
 ```text
-electrumx-ravencoin-core-1
+electrumx-ravencoin-ravencoin-core-1
 electrumx-ravencoin-electrumx-1
 ```
 

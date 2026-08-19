@@ -100,6 +100,22 @@ class HostControllerValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.controller._validated_limit({"x": bad}, "x", current)
 
+    def test_apply_tc_recreates_its_owned_tree_before_readding_filters(self):
+        with mock.patch.object(self.controller, "_root_qdisc", return_value="qdisc htb 1: root refcnt 5"):
+            with mock.patch.object(self.controller, "_ns") as ns:
+                self.controller._apply_tc(123, "eth0", 1024)
+        calls = [call.args for call in ns.call_args_list]
+        self.assertEqual(calls[0], (123, "tc", "qdisc", "del", "dev", "eth0", "root"))
+        filter_calls = [args for args in calls if len(args) > 3 and args[2:4] == ("filter", "add")]
+        self.assertEqual(len(filter_calls), len(self.controller.PRIVATE_CIDRS))
+
+    def test_apply_tc_refuses_foreign_root_qdisc(self):
+        with mock.patch.object(self.controller, "_root_qdisc", return_value="qdisc fq_codel 0: root"):
+            with mock.patch.object(self.controller, "_ns") as ns:
+                with self.assertRaises(RuntimeError):
+                    self.controller._apply_tc(123, "eth0", 1024)
+        ns.assert_not_called()
+
     def test_zero_connection_limit_means_deployment_default(self):
         state = self.controller._default_state()
         self.assertEqual(state["core_max_peers"], 0)
