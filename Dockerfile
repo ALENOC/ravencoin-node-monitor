@@ -5,9 +5,9 @@ FROM python:3.13-slim
 # isn't writable at runtime.
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Fixed uid/gid lets the optional host-side bandwidth controller expose a
-# Unix socket to this unprivileged process without Docker-socket access or
-# CAP_NET_ADMIN inside the monitor container.
+# Fixed uid/gid lets the optional host-side controller expose a Unix socket
+# to this unprivileged process without Docker-socket access or CAP_NET_ADMIN
+# inside the monitor container.
 RUN groupadd --system --gid 10001 monitor \
     && useradd --system --create-home --uid 10001 --gid 10001 monitor
 WORKDIR /app
@@ -19,4 +19,4 @@ EXPOSE 8899
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8899/healthz', timeout=4)" || exit 1
 
-ENTRYPOINT ["python3", "server.py"]
+ENTRYPOINT ["python3", "control_server.py"]
