@@ -1,10 +1,10 @@
 """Bundles every piece of state that must survive across poll cycles
-(chain baseline, mempool classification cache, event log, RAM history,
-alert cooldowns). Constructed once in server.py and mutated only by the
-poll loop thread - the single-writer discipline that keeps this safe
-without needing locks scattered across every module; each module that
-does have its own internal concurrency need (history's SQLite connection,
-the event log, rpc.py's latency tracker) locks itself.
+(chain baseline, mempool classification cache, P2P traffic baseline, event
+log, RAM history, alert cooldowns). Constructed once in server.py and
+mutated only by the poll loop thread - the single-writer discipline that
+keeps this safe without needing locks scattered across every module; each
+module that does have its own internal concurrency need (history's SQLite
+connection, the event log, rpc.py's latency tracker) locks itself.
 """
 
 import time
@@ -14,12 +14,14 @@ import chain
 import events
 import history
 import mempool_cache
+import network_traffic
 
 
 class MonitorState:
     def __init__(self, cfg):
         self.chain_monitor = chain.ChainMonitor(cfg)
         self.mempool_cache = mempool_cache.MempoolTxCache()
+        self.network_traffic = network_traffic.TrafficTracker()
         self.alert_dispatcher = alerts.AlertDispatcher()
         self.transitions = events.TransitionTracker()
 
