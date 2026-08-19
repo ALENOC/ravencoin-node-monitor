@@ -47,6 +47,15 @@ class Config:
     bind_port: int = 8899
     poll_interval: int = 10
 
+    # HTTP access hardening. Private/loopback IP Host headers and localhost
+    # are accepted automatically; DNS/reverse-proxy names must be listed in
+    # monitor_allowed_hosts. Setting monitor_password enables HTTP Basic auth
+    # for the dashboard and data endpoints (/healthz and /readyz stay public
+    # so orchestrator probes do not need credentials).
+    monitor_allowed_hosts: str = ""
+    monitor_user: str = "monitor"
+    monitor_password: str = None
+
     core_host: str = "127.0.0.1"
     core_port: int = 8766
     core_user: str = None
@@ -67,6 +76,10 @@ class Config:
     ex_ssl_port: int = 50002
     ex_ssl_sni: str = None
     ex_ssl_verify: bool = False
+    # Unverified TLS is automatically permitted only for local/private
+    # ElectrumX targets. This escape hatch is required to deliberately use
+    # CERT_NONE against a remote/FQDN target.
+    ex_allow_insecure_remote: bool = False
     # "rpc": call the admin RPC directly (needs ELECTRUMX_RPC_HOST reachable).
     # "file": read a JSON snapshot written by contrib/electrumx-admin-poller.py
     # - use this when the admin RPC is locked to 127.0.0.1 inside its own
@@ -118,6 +131,9 @@ def load() -> Config:
         bind_host=_env("BIND_HOST", "0.0.0.0"),
         bind_port=_env_int("BIND_PORT", 8899),
         poll_interval=_env_int("POLL_INTERVAL", 10),
+        monitor_allowed_hosts=_env("MONITOR_ALLOWED_HOSTS", ""),
+        monitor_user=_env("MONITOR_USER", "monitor"),
+        monitor_password=_secret("MONITOR_PASSWORD"),
         core_host=_env("CORE_RPC_HOST", "127.0.0.1"),
         core_port=_env_int("CORE_RPC_PORT", 8766),
         core_user=_secret("CORE_RPC_USER"),
@@ -133,6 +149,7 @@ def load() -> Config:
         ex_ssl_port=_env_int("ELECTRUMX_SSL_PORT", 50002),
         ex_ssl_sni=_env("ELECTRUMX_SSL_SNI", ex_ssl_host),
         ex_ssl_verify=_env_bool("ELECTRUMX_SSL_VERIFY", False),
+        ex_allow_insecure_remote=_env_bool("ELECTRUMX_ALLOW_INSECURE_REMOTE", False),
         ex_admin_source=_env("ELECTRUMX_ADMIN_SOURCE", "rpc").strip().lower(),
         ex_admin_file=_env("ELECTRUMX_ADMIN_FILE"),
         ex_admin_max_age=_env_int("ELECTRUMX_ADMIN_MAX_AGE", 60),
