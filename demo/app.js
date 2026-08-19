@@ -48,7 +48,6 @@ function renderNetwork(network) {
   if (!network) return;
   setText("blocks", fmtInt(network.blocks)); setText("headers", fmtInt(network.headers));
   setText("chain", network.chain || "—"); setText("node-chain", network.chain || "—");
-  setText("node-blocks", fmtInt(network.blocks));
   setText("difficulty", Number.isFinite(network.difficulty) ? nf.format(network.difficulty) : "—");
   setText("source-peers", fmtInt(network.source_node_connections));
   setText("source-peers-row", fmtInt(network.source_node_connections));
@@ -56,7 +55,7 @@ function renderNetwork(network) {
   setText("source-version", network.subversion ? network.subversion.replaceAll("/", "") : "—");
   if (Number.isFinite(network.verificationprogress)) setText("verify", `${(network.verificationprogress * 100).toFixed(4)}%`);
   const mempool = Number.isFinite(network.source_node_mempool_tx) ? fmtInt(network.source_node_mempool_tx) : "—";
-  setText("mempool-count", mempool); setText("mempool-count-row", mempool);
+  setText("mempool-count-row", mempool);
 }
 function renderBlocks(blocks) {
   const tbody = $("recent-blocks"); if (!tbody) return; tbody.textContent = "";
