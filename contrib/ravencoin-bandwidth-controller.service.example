@@ -1,0 +1,32 @@
+[Unit]
+Description=Ravencoin Node Monitor bandwidth controller
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/ravencoin-node-monitor/contrib/ravencoin-bandwidth-controller.py
+Restart=on-failure
+RestartSec=3
+Environment=BANDWIDTH_SOCKET_PATH=/run/ravencoin-bandwidth/control.sock
+Environment=BANDWIDTH_STATE_FILE=/var/lib/ravencoin-bandwidth/limits.json
+Environment=BANDWIDTH_SOCKET_GID=10001
+Environment=RAVENCOIN_CORE_CONTAINER=electrumx-ravencoin-core-1
+Environment=ELECTRUMX_CONTAINER=electrumx-ravencoin-electrumx-1
+RuntimeDirectory=ravencoin-bandwidth
+RuntimeDirectoryMode=0750
+StateDirectory=ravencoin-bandwidth
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

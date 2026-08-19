@@ -1,0 +1,10 @@
+# Optional overlay for live bandwidth controls.
+# Use together with your normal docker-compose.yml / docker-compose.override.yml
+# after installing and starting the host-side bandwidth controller.
+services:
+  monitor:
+    environment:
+      BANDWIDTH_CONTROL_ENABLED: "true"
+      BANDWIDTH_CONTROL_SOCKET: /run/ravencoin-bandwidth/control.sock
+    volumes:
+      - /run/ravencoin-bandwidth:/run/ravencoin-bandwidth:ro
