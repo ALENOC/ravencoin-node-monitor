@@ -42,13 +42,14 @@ class DashboardCspTests(unittest.TestCase):
         self.assertIn(f"script-src 'nonce-{nonces[0]}'", csp)
         script_directive = next(part for part in csp.split(";") if "script-src" in part)
         self.assertNotIn("'unsafe-inline'", script_directive)
-        self.assertIn('src="/static/network-traffic.js"', body)
+        self.assertRegex(body, r'src="/static/network-traffic\.js(?:\?v=[^"]+)?"')
 
-    def test_network_traffic_script_is_served(self):
+    def test_network_traffic_script_is_served_without_long_cache(self):
         status, body, headers = self.request("/static/network-traffic.js")
         self.assertEqual(status, 200)
         self.assertIn("Ravencoin network traffic", body)
         self.assertIn("javascript", headers.get("Content-Type", ""))
+        self.assertEqual(headers.get("Cache-Control"), "no-cache")
 
 
 if __name__ == "__main__":
