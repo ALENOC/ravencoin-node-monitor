@@ -5,7 +5,8 @@
     { "source": "/demo", "destination": "/demo/index.html" }
   ],
   "functions": {
-    "api/demo-data.js": { "maxDuration": 10 }
+    "api/demo-data.js": { "maxDuration": 10 },
+    "api/demo-history.js": { "maxDuration": 10 }
   },
   "headers": [
     {
