@@ -10,13 +10,16 @@ Two distinct interfaces:
   state without needing any Core credentials at all.
 """
 
+import ipaddress
 import json
 import socket
 import ssl
 import time
 
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
-def _request(sock, method, params=None, timeout=6):
+
+def _request(sock, method, params=None, timeout=6, max_response_bytes=MAX_RESPONSE_BYTES):
     payload = json.dumps({"id": 1, "method": method, "params": params or []}) + "\n"
     sock.settimeout(timeout)
     sock.sendall(payload.encode())
@@ -25,7 +28,13 @@ def _request(sock, method, params=None, timeout=6):
         chunk = sock.recv(65536)
         if not chunk:
             break
+        if len(buf) + len(chunk) > max_response_bytes:
+            raise RuntimeError(
+                f"ElectrumX response exceeds {max_response_bytes} bytes"
+            )
         buf += chunk
+    if not buf.endswith(b"\n"):
+        raise RuntimeError("ElectrumX connection closed before a complete response")
     data = json.loads(buf.decode())
     if data.get("error"):
         raise RuntimeError(str(data["error"]))
@@ -37,8 +46,52 @@ def admin_call(host, port, method, params=None, timeout=6):
         return _request(sock, method, params, timeout=timeout)
 
 
-def backend_info(host, port, sni, verify=False, timeout=6):
-    ctx = ssl.create_default_context() if verify else ssl._create_unverified_context()
+def _is_localish_host(host):
+    """Return True for targets where intentionally unverified TLS can be
+    reasonable: loopback/private/link-local IP literals, localhost, mDNS
+    names, and single-label Docker/LAN service names.
+
+    Public/FQDN targets are deliberately not treated as local. This is a
+    policy decision, not DNS resolution: resolving a public name before
+    deciding whether certificate verification is required would itself put
+    the decision behind an untrusted DNS answer.
+    """
+    normalized = (host or "").strip().lower().rstrip(".")
+    if not normalized:
+        return False
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return True
+    if normalized.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(normalized)
+    except ValueError:
+        return "." not in normalized
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
+def backend_info(
+    host,
+    port,
+    sni,
+    verify=False,
+    timeout=6,
+    allow_insecure_remote=False,
+):
+    if not verify and not allow_insecure_remote and not _is_localish_host(host):
+        raise ValueError(
+            "refusing unverified TLS to a non-local ElectrumX host; "
+            "enable ELECTRUMX_SSL_VERIFY or explicitly set "
+            "ELECTRUMX_ALLOW_INSECURE_REMOTE=true"
+        )
+
+    if verify:
+        ctx = ssl.create_default_context()
+    else:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
     with socket.create_connection((host, port), timeout=timeout) as raw:
         with ctx.wrap_socket(raw, server_hostname=sni) as sock:
             return _request(sock, "server.ravencoin_backend", timeout=timeout)
