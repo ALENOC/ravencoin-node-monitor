@@ -7,8 +7,9 @@ Core+ElectrumX deployments.
 `build_snapshot(cfg, state)` is the entry point the poll loop calls each
 cycle. `state` (state.MonitorState) carries everything that needs to
 survive between cycles - chain baseline, mempool classification cache,
-event log, RAM history, alert cooldowns - and is only ever mutated from
-the single poll-loop thread, so nothing in here needs a lock of its own.
+P2P traffic baseline, event log, RAM history, alert cooldowns - and is only
+ever mutated from the single poll-loop thread, so nothing in here needs a
+lock of its own.
 """
 
 import time
@@ -109,12 +110,13 @@ def _collect_core(cfg, errors):
     except rpc.RpcWarmupError as exc:
         # Core is still loading the block index / verifying blocks after a
         # (re)start. Every other RPC call would fail the same way right
-        # now, so stop here instead of making six more doomed calls.
+        # now, so stop here instead of making more doomed calls.
         return {
             "starting_up": True,
             "startup_message": str(exc),
             "blockchain": None,
             "network": None,
+            "net_totals": None,
             "network_hashrate": None,
             "mempool": None,
             "mempool_txs": None,
@@ -133,6 +135,14 @@ def _collect_core(cfg, errors):
         network = rpc.call(cfg, "getnetworkinfo")
     except rpc.RpcError as exc:
         errors.append(f"getnetworkinfo: {exc}")
+
+    net_totals = None
+    try:
+        net_totals = rpc.call(cfg, "getnettotals")
+        if not isinstance(net_totals, dict):
+            raise rpc.RpcError(f"malformed getnettotals result: {net_totals!r}")
+    except rpc.RpcError as exc:
+        errors.append(f"getnettotals: {exc}")
 
     mempool = None
     try:
@@ -223,6 +233,7 @@ def _collect_core(cfg, errors):
         "startup_message": None,
         "blockchain": blockchain,
         "network": network,
+        "net_totals": net_totals,
         "network_hashrate": network_hashrate,
         "mempool": mempool,
         "mempool_txs": mempool_txs,
@@ -470,6 +481,7 @@ def _history_metrics(snapshot):
     mem = host.get("mem") or {}
     swap = host.get("swap") or {}
     load = host.get("load") or {}
+    traffic = snapshot.get("network_traffic") or {}
     rpc_latency = snapshot.get("rpc_latency") or {}
     ex = snapshot.get("electrumx")
     ex_info = (ex or {}).get("info") or {}
@@ -482,6 +494,8 @@ def _history_metrics(snapshot):
         "mempool_tx_count": mempool.get("size"),
         "mempool_size_bytes": mempool.get("bytes"),
         "network_hashrate": snapshot.get("network_hashrate"),
+        "network_download_bps": traffic.get("download_bytes_per_second"),
+        "network_upload_bps": traffic.get("upload_bytes_per_second"),
         "rpc_latency_ms": rpc_latency.get("current_ms"),
         "electrumx_height": ex_info.get("db height"),
         "electrumx_clients": len(ex.get("sessions") or []) if ex else None,
@@ -499,6 +513,7 @@ def build_snapshot(cfg, state):
     errors = []
     core = _collect_core(cfg, errors)
     starting_up = core.get("starting_up", False)
+    network_traffic = state.network_traffic.update(core.pop("net_totals", None))
 
     if core.get("mempool_txs") is not None:
         state.mempool_cache.classify(cfg, core["mempool_txs"], errors)
@@ -524,6 +539,7 @@ def build_snapshot(cfg, state):
         "node_name": cfg.node_name,
         "mode": "electrumx" if electrumx_data else "core",
         "host": get_host_stats(cfg.extra_disk_paths),
+        "network_traffic": network_traffic,
         "electrumx": electrumx_data,
         "errors": errors,
         "chain_status": chain_status,
