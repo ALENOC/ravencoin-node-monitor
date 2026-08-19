@@ -20,9 +20,13 @@
     style.textContent = `
       .connection-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
       .connection-service { border:1px solid var(--border); border-radius:10px; padding:14px; background:var(--bg); min-width:0; }
-      .connection-service-title { font-size:12px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; margin-bottom:10px; }
-      .connection-current { display:flex; justify-content:space-between; gap:12px; align-items:baseline; margin-bottom:12px; }
-      .connection-current .value { font-size:22px; font-weight:750; font-variant-numeric:tabular-nums; }
+      .connection-service-title { font-size:12px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; margin-bottom:6px; }
+      .connection-help { color:var(--text-muted); font-size:11.5px; line-height:1.45; min-height:34px; margin-bottom:12px; }
+      .connection-stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px; }
+      .connection-stat { border:1px solid var(--border); border-radius:8px; padding:9px 10px; background:var(--bg-elevated); min-width:0; }
+      .connection-stat .k { display:block; color:var(--text-muted); font-size:11px; margin-bottom:3px; }
+      .connection-stat .value { display:block; font-size:20px; font-weight:750; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+      .connection-stat .value.limit { font-size:16px; line-height:1.25; }
       .connection-control-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:end; }
       .connection-control-row label { display:block; color:var(--text-muted); font-size:11px; }
       .connection-control-row input {
@@ -36,9 +40,10 @@
       .connection-control-row button:disabled { opacity:.5; cursor:not-allowed; }
       .connection-status { color:var(--text-muted); font-size:11.5px; line-height:1.45; margin-top:9px; }
       .connection-status.error { color:var(--bad); }
-      .connection-note { color:var(--text-muted); font-size:11.5px; line-height:1.45; margin-top:12px; }
+      .connection-note { color:var(--text-muted); font-size:11.5px; line-height:1.5; margin-top:12px; }
       @media (max-width:900px) { .connection-grid { grid-template-columns:1fr; } }
       @media (max-width:520px) {
+        .connection-stats { grid-template-columns:1fr; }
         .connection-control-row { grid-template-columns:1fr; }
         .connection-control-row button { width:100%; }
       }
@@ -53,24 +58,32 @@
       <div class="connection-grid">
         <div class="connection-service">
           <div class="connection-service-title">Ravencoin Core · P2P peers</div>
-          <div class="connection-current"><span class="k">Connected now</span><span class="value" id="conn-core-current">-</span></div>
+          <div class="connection-help">Other Ravencoin nodes connected directly to this Core instance. This controls simultaneous node-to-node P2P connections; it does not limit Electrum wallet clients.</div>
+          <div class="connection-stats">
+            <div class="connection-stat"><span class="k">Connected now</span><span class="value" id="conn-core-current">-</span></div>
+            <div class="connection-stat"><span class="k">Current limit</span><span class="value limit" id="conn-core-current-limit">-</span></div>
+          </div>
           <div class="connection-control-row">
-            <label>Maximum peers<input id="conn-core-limit" type="number" min="0" max="10000" step="1" inputmode="numeric" value="0"></label>
+            <label>New limit<input id="conn-core-limit" type="number" min="0" max="10000" step="1" inputmode="numeric" value="0"></label>
             <button type="button" id="conn-core-apply">Apply + restart Core</button>
           </div>
           <div class="connection-status" id="conn-core-status">Loading...</div>
         </div>
         <div class="connection-service">
           <div class="connection-service-title">ElectrumX · client sessions</div>
-          <div class="connection-current"><span class="k">Connected now</span><span class="value" id="conn-electrumx-current">-</span></div>
+          <div class="connection-help">Wallets and other Electrum-protocol clients connected to this ElectrumX server. These are client sessions, not Ravencoin P2P peers.</div>
+          <div class="connection-stats">
+            <div class="connection-stat"><span class="k">Connected now</span><span class="value" id="conn-electrumx-current">-</span></div>
+            <div class="connection-stat"><span class="k">Current limit</span><span class="value limit" id="conn-electrumx-current-limit">-</span></div>
+          </div>
           <div class="connection-control-row">
-            <label>Maximum clients<input id="conn-electrumx-limit" type="number" min="0" max="10000" step="1" inputmode="numeric" value="0"></label>
+            <label>New limit<input id="conn-electrumx-limit" type="number" min="0" max="10000" step="1" inputmode="numeric" value="0"></label>
             <button type="button" id="conn-electrumx-apply">Apply + restart ElectrumX</button>
           </div>
           <div class="connection-status" id="conn-electrumx-status">Loading...</div>
         </div>
       </div>
-      <div class="connection-note"><b>0 = deployment default</b>, not zero connections. Core uses its native <code>-maxconnections</code> option and ElectrumX uses native <code>MAX_SESSIONS</code>. Applying a new value recreates only the selected service, so its current peers/clients disconnect briefly and reconnect normally. No Ravencoin Core or ElectrumX source code is modified.</div>
+      <div class="connection-note"><b>Connected now</b> is the live number of connections. <b>Current limit</b> is the limit currently active in the running service. <b>New limit</b> is the value to apply. Entering <b>0</b> removes the monitor override and restores the deployment's own default/configured value; it never means zero connections. Core uses native <code>-maxconnections</code>, while ElectrumX uses native <code>MAX_SESSIONS</code>. Applying a change restarts only the selected service, so its peers/clients disconnect briefly and reconnect normally.</div>
     `;
 
     if (anchor.id === "card-charts") anchor.parentNode.insertBefore(card, anchor);
@@ -85,12 +98,27 @@
     if (button) button.disabled = !enabled;
   }
 
+  function currentLimitLabel(service, data) {
+    if (!data) return "-";
+    const noun = service === "core" ? "peers" : "clients";
+    const configured = Number(data.configured_limit || 0);
+    if (data.running_limit !== null && data.running_limit !== undefined && Number.isFinite(Number(data.running_limit))) {
+      const running = Number(data.running_limit);
+      const suffix = configured === 0 ? " · deployment" : "";
+      return `${running.toLocaleString()} ${noun}${suffix}`;
+    }
+    if (configured > 0 && data.applied === true) return `${configured.toLocaleString()} ${noun}`;
+    if (configured > 0 && data.applied === false) return "Pending apply";
+    return "Deployment default";
+  }
+
   function renderService(service, data) {
     const status = document.getElementById(`conn-${service}-status`);
     const input = document.getElementById(`conn-${service}-limit`);
     set(`conn-${service}-current`, data && data.current_connections !== null && data.current_connections !== undefined
       ? Number(data.current_connections).toLocaleString()
       : "-");
+    set(`conn-${service}-current-limit`, currentLimitLabel(service, data));
 
     if (!data) {
       if (status) { status.textContent = "Host controller unavailable"; status.classList.add("error"); }
@@ -110,14 +138,14 @@
       text = "Docker Compose metadata unavailable; cannot safely recreate this service.";
       isError = true;
     } else if (configured > 0 && data.applied === false) {
-      text = `Configured max ${configured.toLocaleString()} · waiting to be reapplied`;
+      text = `Monitor override ${configured.toLocaleString()} is configured but not active yet.`;
       isError = true;
     } else if (configured > 0) {
-      text = `Managed max ${configured.toLocaleString()} · active`;
+      text = `Monitor override active: ${configured.toLocaleString()}.`;
     } else if (data.running_limit !== null && data.running_limit !== undefined) {
-      text = `Deployment setting: ${Number(data.running_limit).toLocaleString()} · controller not overriding it`;
+      text = `Using deployment setting ${Number(data.running_limit).toLocaleString()}; monitor is not overriding it.`;
     } else {
-      text = "Deployment default · controller not overriding it";
+      text = "Using deployment default; monitor is not overriding it.";
     }
 
     if (status) {
