@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f2621a">
+<meta name="description" content="Public demo of Ravencoin Node Monitor using live public Ravencoin and RVN/USDT data. Node-specific information is explicitly simulated or unavailable.">
+<title>Ravencoin Node Monitor — Public Demo</title>
+<link rel="stylesheet" href="/demo/style.css">
+<script src="/demo/app.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="raven" aria-hidden="true">R</div>
+      <div>
+        <h1>Ravencoin Node Monitor</h1>
+        <div class="sub">Public worldwide demonstration · no private node attached</div>
+      </div>
+    </div>
+    <div id="live-pill" class="live-pill warn"><span class="dot"></span><span id="live-text">Loading public data…</span></div>
+  </header>
+
+  <section class="demo-banner" aria-label="Demo notice">
+    <span class="demo-badge">PUBLIC DEMO</span>
+    <div>
+      <strong>This page is a demonstration, not a view into a real private node.</strong>
+      <p>RVN/USDT market data and selected Ravencoin mainnet information are fetched live from public APIs. Host resources, local storage, this node’s P2P traffic, peer addresses, connected ElectrumX clients and backend identity require a real Ravencoin Core/ElectrumX deployment, so those sections are clearly marked as simulated or unavailable.</p>
+    </div>
+  </section>
+
+  <div id="error" class="error"></div>
+
+  <div class="grid">
+    <section class="card span-4 health">
+      <div>
+        <div class="score" id="health-score">—</div>
+        <div class="sub">public-data demo status</div>
+      </div>
+      <div class="checks">
+        <div class="check"><i>✓</i><span>Public market feed</span></div>
+        <div class="check"><i>✓</i><span>Mainnet chain feed</span></div>
+        <div class="check demo"><i>!</i><span>Local node checks simulated</span></div>
+        <div class="check demo"><i>!</i><span>ElectrumX checks simulated</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>RVN / USDT <span class="tag">LIVE PUBLIC</span></h2>
+      <div class="big"><span id="price">—</span><span id="price-change" class="change"></span></div>
+      <div class="metric"><span class="k">24h high</span><span class="v" id="price-high">—</span></div>
+      <div class="metric"><span class="k">24h low</span><span class="v" id="price-low">—</span></div>
+      <div class="metric"><span class="k">24h RVN volume</span><span class="v" id="price-volume">—</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Mainnet sync <span class="tag">LIVE PUBLIC</span></h2>
+      <div class="big" id="blocks">—</div>
+      <div class="sub">latest height from public explorer node</div>
+      <div class="metric"><span class="k">Headers</span><span class="v" id="headers">—</span></div>
+      <div class="metric"><span class="k">Verification</span><span class="v" id="verify">—</span></div>
+      <div class="metric"><span class="k">Chain</span><span class="v" id="chain">—</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Public network view <span class="tag">LIVE PUBLIC</span></h2>
+      <div class="metric"><span class="k">Difficulty</span><span class="v" id="difficulty">—</span></div>
+      <div class="metric"><span class="k">Explorer source peers</span><span class="v" id="source-peers">—</span></div>
+      <div class="metric"><span class="k">Explorer source mempool</span><span class="v" id="source-mempool">—</span></div>
+      <div class="metric"><span class="k">Source Core</span><span class="v" id="source-version">—</span></div>
+      <div class="sub" style="margin-top:8px">Peer count here belongs to the public API’s source node; it is not a global Ravencoin peer count.</div>
+    </section>
+
+    <section class="card">
+      <h2>Demo node <span class="tag demo">SIMULATED</span></h2>
+      <div class="metric"><span class="k">Uptime</span><span class="v">4d 7h</span></div>
+      <div class="metric"><span class="k">Mode</span><span class="v">Core + ElectrumX</span></div>
+      <div class="metric"><span class="k">Health</span><span class="v sim">example only</span></div>
+      <div class="metric"><span class="k">Identity</span><span class="v sim">not queried</span></div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Host resources <span class="tag demo">SIMULATED</span></h2>
+      <div class="metric"><span class="k">Load (1/5/15m)</span><span class="v">0.43 / 0.35 / 0.30</span></div>
+      <div class="metric"><span class="k">CPU temp</span><span class="v">52.4 C</span></div>
+      <div class="metric"><span class="k">Memory</span><span class="v">4.56 GB free / 7.87 GB</span></div>
+      <div class="metric"><span class="k">Swap</span><span class="v">0.1 / 2 GB (4.8%)</span></div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Storage <span class="tag demo">SIMULATED</span></h2>
+      <div class="metric"><span class="k">Disk 1</span><span class="v">107.4 GB free / 125.6 GB</span></div>
+      <div class="metric"><span class="k">Disk 2</span><span class="v">1807.2 GB free / 1967.9 GB</span></div>
+      <div class="metric"><span class="k">Growth</span><span class="v">-0.07 GB/day</span></div>
+      <div class="metric"><span class="k">Est. full</span><span class="v">~1473 days</span></div>
+    </section>
+
+    <section class="card span-4 network-card">
+      <h2 class="network-title">Ravencoin node P2P traffic <span class="tag demo">SIMULATED — REAL NODE REQUIRED</span></h2>
+      <div>
+        <div class="speed" id="demo-down">42.8 KB/s</div>
+        <div class="speed-label">Download · Ravencoin P2P only</div>
+        <div class="metric"><span class="k">Received</span><span class="v" id="demo-received">3.82 GB</span></div>
+      </div>
+      <div>
+        <div class="speed" id="demo-up">18.6 KB/s</div>
+        <div class="speed-label">Upload · Ravencoin P2P only</div>
+        <div class="metric"><span class="k">Sent</span><span class="v" id="demo-sent">1.47 GB</span></div>
+      </div>
+      <div>
+        <div class="speed" id="demo-total">5.29 GB</div>
+        <div class="speed-label">Total exchanged by example node</div>
+        <div class="metric"><span class="k">Sampling</span><span class="v">getnettotals</span></div>
+      </div>
+      <div>
+        <div class="speed">P2P</div>
+        <div class="speed-label">Scope of the real implementation</div>
+        <div class="metric"><span class="k">Host traffic</span><span class="v">excluded</span></div>
+      </div>
+      <div class="traffic-note">In a real installation these values come from Ravencoin Core <code>getnettotals</code>, so they measure only the local Ravencoin node’s P2P traffic. The numbers shown on this public page are deliberately simulated and animated only to demonstrate the UI.</div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Recent blocks <span class="tag">LIVE PUBLIC</span></h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Height</th><th>Age</th><th>Txs</th><th>Size</th></tr></thead>
+          <tbody id="recent-blocks"><tr><td colspan="4" class="placeholder">Loading public mainnet blocks…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Network peers <span class="tag required">NODE REQUIRED</span></h2>
+      <div class="placeholder">The public demo never exposes a real private node’s peer addresses. A real deployment reads its own peer list from Ravencoin Core <code>getpeerinfo</code>.</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Address</th><th>Dir</th><th>Subversion</th><th>Ping</th></tr></thead>
+          <tbody><tr><td>192.0.2.x:8767</td><td>OUT</td><td>Ravencoin:4.8.0</td><td class="sim">SIMULATED</td></tr><tr><td>198.51.100.x:8767</td><td>IN</td><td>Ravencoin:4.8.0</td><td class="sim">SIMULATED</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Connected Electrum clients <span class="tag required">ELECTRUMX REQUIRED</span></h2>
+      <div class="placeholder">Not available in the worldwide demo. This information requires an actual ElectrumX server/admin data source and may contain client addresses, so no production data is proxied here.</div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Backend compatibility <span class="tag demo">SIMULATED</span></h2>
+      <div class="check"><i>✓</i><span>Core version safe <span class="sim">(demo example)</span></span></div>
+      <div class="check"><i>✓</i><span>Network matches <span class="sim">(demo example)</span></span></div>
+      <div class="check"><i>✓</i><span>Backend synchronized <span class="sim">(demo example)</span></span></div>
+      <div class="check demo"><i>!</i><span>Build identity requires a real backend</span></div>
+    </section>
+
+    <section class="card span-4">
+      <h2>Data provenance</h2>
+      <div class="sub">Live public data is fetched server-side by the Vercel demo endpoint. No RPC credentials, node addresses or private infrastructure are configured in this deployment.</div>
+      <div class="sources">
+        <span id="source-binance" class="source">Binance RVN/USDT</span>
+        <span id="source-chain" class="source">Ravencoin Explorer nodeinfo</span>
+        <span id="source-blocks" class="source">Ravencoin Explorer blocks</span>
+      </div>
+      <div class="metric" style="margin-top:8px"><span class="k">Last public refresh</span><span class="v" id="updated">—</span></div>
+    </section>
+  </div>
+
+  <footer>Ravencoin Node Monitor · PUBLIC DEMO · live public market/chain data + explicitly simulated node-only sections</footer>
+</div>
+</body>
+</html>
