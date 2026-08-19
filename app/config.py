@@ -84,6 +84,13 @@ class Config:
     ex_admin_file: str = None
     ex_admin_max_age: int = 60
 
+    # Optional write-capable bandwidth control. The monitor itself remains
+    # unprivileged and talks to the host controller through this Unix socket.
+    # Writes are additionally refused unless MONITOR_PASSWORD is configured.
+    bandwidth_control_enabled: bool = False
+    bandwidth_control_socket: str = "/run/ravencoin-bandwidth/control.sock"
+    bandwidth_control_timeout: int = 2
+
     price_feed_enabled: bool = False
     price_feed_symbol: str = "RVNUSDT"
     price_poll_interval: int = 300
@@ -148,6 +155,9 @@ def load() -> Config:
         ex_admin_source=_env("ELECTRUMX_ADMIN_SOURCE", "rpc").strip().lower(),
         ex_admin_file=_env("ELECTRUMX_ADMIN_FILE"),
         ex_admin_max_age=_env_int("ELECTRUMX_ADMIN_MAX_AGE", 60),
+        bandwidth_control_enabled=_env_bool("BANDWIDTH_CONTROL_ENABLED", False),
+        bandwidth_control_socket=_env("BANDWIDTH_CONTROL_SOCKET", "/run/ravencoin-bandwidth/control.sock"),
+        bandwidth_control_timeout=_env_int("BANDWIDTH_CONTROL_TIMEOUT", 2),
         price_feed_enabled=_env_bool("PRICE_FEED_ENABLED", False),
         price_feed_symbol=_env("PRICE_FEED_SYMBOL", "RVNUSDT"),
         price_poll_interval=_env_int("PRICE_POLL_INTERVAL", 300),
