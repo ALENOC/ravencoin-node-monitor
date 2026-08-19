@@ -4,6 +4,7 @@
   const UNIT_FACTORS = { "B/s": 1, "KB/s": 1024, "MB/s": 1024 ** 2, "GB/s": 1024 ** 3 };
   let bandwidthMax = 0;
   let bandwidthWriteEnabled = false;
+  let coreP2PUploadBytesPerSecond = null;
 
   function fmtBytes(value) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return "-";
@@ -118,27 +119,27 @@
       <h2>Bandwidth control <span class="peer-count-tag" id="bandwidth-control-tag">HOST TC</span></h2>
       <div class="bandwidth-grid">
         <div class="bandwidth-service" data-bandwidth-service="core">
-          <div class="bandwidth-service-title">Ravencoin Core · public upload</div>
-          <div class="bandwidth-current"><span class="k">Current</span><span class="value" id="bw-core-current">collecting...</span></div>
+          <div class="bandwidth-service-title">Ravencoin Core · P2P upload</div>
+          <div class="bandwidth-current"><span class="k">Current P2P upload</span><span class="value" id="bw-core-current">collecting...</span></div>
           <div class="bandwidth-control-row">
-            <label>Limit<input id="bw-core-value" type="number" min="0" step="0.01" inputmode="decimal" value="0"></label>
+            <label>Public egress limit<input id="bw-core-value" type="number" min="0" step="0.01" inputmode="decimal" value="0"></label>
             <label>Unit<select id="bw-core-unit"><option>B/s</option><option selected>KB/s</option><option>MB/s</option><option>GB/s</option></select></label>
             <button type="button" id="bw-core-apply">Apply</button>
           </div>
           <div class="bandwidth-actions"><button type="button" class="bandwidth-unlimited" id="bw-core-unlimited">Unlimited</button><span class="bandwidth-status" id="bw-core-status">Loading...</span></div>
         </div>
         <div class="bandwidth-service" data-bandwidth-service="electrumx">
-          <div class="bandwidth-service-title">ElectrumX · public upload</div>
-          <div class="bandwidth-current"><span class="k">Current</span><span class="value" id="bw-electrumx-current">collecting...</span></div>
+          <div class="bandwidth-service-title">ElectrumX · public egress</div>
+          <div class="bandwidth-current"><span class="k">Current egress</span><span class="value" id="bw-electrumx-current">collecting...</span></div>
           <div class="bandwidth-control-row">
-            <label>Limit<input id="bw-electrumx-value" type="number" min="0" step="0.01" inputmode="decimal" value="0"></label>
+            <label>Public egress limit<input id="bw-electrumx-value" type="number" min="0" step="0.01" inputmode="decimal" value="0"></label>
             <label>Unit<select id="bw-electrumx-unit"><option>B/s</option><option selected>KB/s</option><option>MB/s</option><option>GB/s</option></select></label>
             <button type="button" id="bw-electrumx-apply">Apply</button>
           </div>
           <div class="bandwidth-actions"><button type="button" class="bandwidth-unlimited" id="bw-electrumx-unlimited">Unlimited</button><span class="bandwidth-status" id="bw-electrumx-status">Loading...</span></div>
         </div>
       </div>
-      <div class="bandwidth-note">Limits are applied live by the optional host-side Linux <code>tc</code> controller. B/s, KB/s, MB/s and GB/s are supported; KB/MB/GB use 1024-based units. A value of 0 means unlimited. Private Docker/LAN destinations are exempt so Core ↔ ElectrumX traffic is not throttled.</div>
+      <div class="bandwidth-note"><b>Ravencoin Core current P2P upload is the exact same <code>getnettotals</code> sample shown in Ravencoin Network Traffic above, so the two values always match.</b> The limit itself is enforced at network level by Linux <code>tc</code> on public egress. ElectrumX has no equivalent application counter, so its current egress is measured directly by <code>tc</code>. B/s, KB/s, MB/s and GB/s are supported; a value of 0 means unlimited. Private Docker/LAN destinations are exempt so Core ↔ ElectrumX traffic is not throttled.</div>
     `;
     compatibility.parentNode.insertBefore(bandwidthCard, compatibility);
     return true;
@@ -194,8 +195,10 @@
 
   function render(traffic) {
     if (!traffic || traffic.scope !== "ravencoin_p2p") return;
+    coreP2PUploadBytesPerSecond = traffic.upload_bytes_per_second;
     set("rvn-download-rate", fmtRate(traffic.download_bytes_per_second));
-    set("rvn-upload-rate", fmtRate(traffic.upload_bytes_per_second));
+    set("rvn-upload-rate", fmtRate(coreP2PUploadBytesPerSecond));
+    set("bw-core-current", fmtRate(coreP2PUploadBytesPerSecond));
     set("rvn-total-received", fmtBytes(traffic.total_bytes_received));
     set("rvn-total-sent", fmtBytes(traffic.total_bytes_sent));
     set("rvn-total-traffic", fmtBytes(traffic.total_bytes_transferred));
@@ -251,7 +254,8 @@
 
   function renderBandwidthService(service, data) {
     const status = document.getElementById(`bw-${service}-status`);
-    set(`bw-${service}-current`, fmtRate(data && data.upload_bytes_per_second));
+    const current = service === "core" ? coreP2PUploadBytesPerSecond : data && data.upload_bytes_per_second;
+    set(`bw-${service}-current`, fmtRate(current));
     if (!data) {
       if (status) { status.textContent = "Unavailable"; status.classList.add("error"); }
       setControlEnabled(service, false);
@@ -262,7 +266,7 @@
     if (status) {
       status.classList.toggle("error", data.status !== "active");
       if (data.status !== "active") status.textContent = data.error || "Container unavailable";
-      else if (limit > 0) status.textContent = `Limited to ${fmtRate(limit)}`;
+      else if (limit > 0) status.textContent = `Public egress limited to ${fmtRate(limit)}`;
       else status.textContent = "Unlimited";
     }
     setControlEnabled(service, bandwidthWriteEnabled && data.status === "active");
