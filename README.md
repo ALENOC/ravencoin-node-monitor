@@ -1,491 +1,753 @@
 # Ravencoin Node Monitor
 
-A lightweight Ravencoin Core node health, security, and diagnostics
-monitor, optionally paired with ElectrumX. One adaptive UI: it shows
-Core-only metrics for a standalone node, and automatically adds ElectrumX
-server / connected-client cards when ElectrumX is reachable.
+A lightweight, self-hosted dashboard for **Ravencoin Core**, with optional **ElectrumX** monitoring and optional host-side controls for upload bandwidth and connection limits.
 
-Stdlib-only Python (no pip dependencies), a single static HTML page, and a
-Docker image that runs on anything from a Raspberry Pi to a VPS.
+It is designed for the machine that actually runs your node: Raspberry Pi, Orange Pi, mini PC, home server, VPS, or any Linux host where Docker is available.
 
-## Screenshots
+> **The short version:** point the monitor at your Ravencoin Core RPC, open the dashboard in your browser, and you get node health, sync state, peers, mempool, storage, host resources, P2P traffic, ElectrumX status, history and diagnostics in one place. If you install the optional host controller, you can also change upload caps and peer/client limits from the dashboard without editing Ravencoin Core or ElectrumX source code.
 
-![Node health, sync status, and price/hashrate history](pictures/screenshot.png)
+## Live public demo
 
-![Mempool, peers, event timeline, and host resources](pictures/screenshot_2.png)
+A public demonstration is available at:
 
-## Features
+**https://ravencoin-node-monitor.vercel.app/**
 
-**Monitoring**
-- Sync status, network hashrate, P2P peers (with addresses), mempool stats
-  and transaction list (with RVN vs. asset-transfer classification), host
-  resource usage (load, memory, swap, disk, CPU temperature)
-- Click a mempool transaction for full detail: inputs, and every output's
-  address, type, and RVN or asset amount; click a recent block to see its
-  full transaction list
-- Sortable and filterable peer/mempool tables, copy-to-clipboard on
-  addresses and TXIDs, manual light/dark/auto theme toggle
-- Reports disk usage for extra mounted volumes (e.g. blockchain data on a
-  separate drive from the OS), not just the root filesystem
-- A dedicated "node is starting up" state (instead of a wall of RPC
-  errors) while Core is loading its block index after a restart
-- Optional RVN/USDT price ticker (Binance public API)
-- Optional ElectrumX section: server info and a live list of connected
-  Electrum clients with their addresses
+The public demo is deliberately separated from any private node. It uses public market/mainnet data where possible and clearly labels local-only values as simulated or unavailable. See [`DEMO.md`](DEMO.md) for the exact security boundary.
 
-**Health, diagnostics & operations**
-- A deterministic Node Health score (0-100) derived from chain state, RPC
-  reachability, peer count, disk usage, mempool, and ElectrumX lag
-- Chain integrity monitor: stale-tip detection, reorg detection (a reorg
-  is the network settling on a different, longer chain than the one your
-  node had already accepted - it happens occasionally and isn't
-  necessarily a problem), headers-vs-validated-blocks lag, alternate
-  chain tips (`getchaintips`)
-- Core version safety check against an optional configured minimum,
-  entirely offline - no internet access is ever made mandatory
-- An internal event system (new block, Core down/recovered, reorg, disk
-  warning/critical, ElectrumX down/recovered/behind, peer count low, Core
-  restart detected, ...) that fires only on real state transitions, never
-  once per poll cycle, with a browsable timeline in the UI
-- Lightweight in-RAM history (see "History storage" below) with small
-  built-in charts (no charting library) and a disk-usage growth/runway
-  estimate
-- Peer intelligence: inbound/outbound, IPv4/IPv6/Tor counts, subversion
-  distribution (the client name/version string each peer reports, e.g.
-  `/Ravencoin:4.8.0/`) - no external GeoIP lookups (nothing looks up a
-  peer's IP against a geographic-location database)
-- Richer Ravencoin asset classification: issuance, reissue, transfer,
-  qualifier, sub-qualifier, restricted, unique, and ownership-token assets
-  distinguished where Core's own RPC output makes it possible to do so
-  reliably (reported as `unknown` rather than guessed otherwise)
-- Optional generic webhook alerting on event state transitions, with a
-  cooldown so a flapping condition can't spam it
-- `/healthz`, `/readyz`, and an optional `/metrics` for external
-  monitoring - `/metrics` is Prometheus text format (a plain-text metrics
-  format read by monitoring tools like Prometheus/Grafana), hand-rolled
-  here with no client library dependency
-- Optional `PRIVACY_MODE` masks IP addresses server-side, before they ever
-  reach the browser
-- A sanitized `/api/diagnostics` export for bug reports - never includes
-  RPC credentials, webhook URLs, or other secrets
+## What it looks like
 
-Zero third-party Python packages, one JSON `/api/status` endpoint plus a
-handful of small focused endpoints, auto-refreshing page.
+### Node health, sync, resources and Ravencoin P2P traffic
 
-## Quick start
+![Ravencoin Node Monitor overview](pictures/dashboard-overview.webp)
 
-Five steps, copy-pasteable, no assumed knowledge.
+### Live bandwidth controls, connection limits and history
 
-**1. Install Docker**, if you don't already have it. On Debian, Ubuntu, or
-Raspberry Pi OS:
+![Bandwidth and connection controls](pictures/dashboard-controls.webp)
+
+### Recent blocks, mempool, peers and ElectrumX clients
+
+Peer addresses in this README screenshot are deliberately redacted.
+
+![Recent blocks, peers and ElectrumX clients with peer IPs redacted](pictures/dashboard-peers-redacted.webp)
+
+### Node, ElectrumX, events and backend compatibility
+
+![Node and ElectrumX status](pictures/dashboard-status.webp)
+
+---
+
+## What this monitor actually does
+
+The monitor reads information from your own Ravencoin Core node and, when configured, your own ElectrumX server. It does **not** replace either service and it does not participate in consensus.
+
+The dashboard can show:
+
+- Ravencoin Core version, chain, block height, headers and synchronization progress;
+- RPC latency and a deterministic node-health score;
+- connected P2P peers, inbound/outbound counts, IPv4/IPv6/Tor counts, peer subversions and ping times;
+- network difficulty and hashrate;
+- mempool count, size, minimum fee and transaction details;
+- recent blocks and transaction IDs;
+- host CPU load, temperature, RAM, swap and disk use;
+- extra mounted disks, useful when the blockchain lives on a separate SSD/NVMe;
+- Ravencoin P2P upload/download rate and cumulative traffic from Core's `getnettotals` RPC;
+- in-memory historical charts and storage-growth estimates;
+- event timeline for new blocks, outages, recoveries, reorgs, low peers, disk warnings and similar state changes;
+- optional RVN/USDT market price;
+- ElectrumX version, uptime, database height, peer-server state and connected Electrum clients;
+- backend compatibility checks;
+- Prometheus-compatible metrics, health/readiness probes and a sanitized diagnostics endpoint.
+
+With the **optional host controller**, the same dashboard can also:
+
+- set a public upload cap for Ravencoin Core;
+- set a public upload cap for ElectrumX;
+- set Ravencoin Core's maximum P2P peers using native `-maxconnections=N`;
+- set ElectrumX's maximum client sessions using native `MAX_SESSIONS=N`.
+
+The monitor does not patch Ravencoin Core or ElectrumX source code to do this.
+
+---
+
+# Quick start
+
+This section is intentionally written for someone who has never installed this project before.
+
+## Before you start
+
+You need:
+
+1. a running Ravencoin Core node;
+2. Core RPC enabled (`server=1` in `raven.conf`);
+3. Docker with Docker Compose;
+4. the RPC username/password used by your node;
+5. optionally, a running ElectrumX server.
+
+If you only run Ravencoin Core, that is fine: the ElectrumX cards simply remain hidden when `ELECTRUMX_ENABLED=auto`.
+
+## 1. Install Docker
+
+On Debian, Ubuntu or Raspberry Pi OS:
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
+sudo usermod -aG docker "$USER"
 ```
 
-Log out and back in (or run `newgrp docker`) for the group change to take
-effect. On other operating systems, follow
-[Docker's own install guide](https://docs.docker.com/engine/install/).
-Verify it worked:
+Then log out and back in, or run:
+
+```bash
+newgrp docker
+```
+
+Check that Compose works:
 
 ```bash
 docker compose version
 ```
 
-**2. Get the code:**
+## 2. Clone the monitor
 
 ```bash
 git clone https://github.com/ALENOC/ravencoin-node-monitor.git
 cd ravencoin-node-monitor
 ```
 
-**3. Configure it.** Copy the example env file and edit two values:
+## 3. Create your configuration
 
 ```bash
 cp .env.example .env
-nano .env   # or any text editor
+nano .env
 ```
 
-Set `CORE_RPC_USER` and `CORE_RPC_PASSWORD` to match your Ravencoin Core
-node's own `raven.conf`. If your `raven.conf` has a plain
-`rpcuser=`/`rpcpassword=` pair, copy those two values as-is. If it instead
-has an `rpcauth=` line (the hashed form Core's own helper script
-generates), that line does **not** contain a usable password - use the
-plaintext password you originally typed into that script when you
-generated it, together with the username from the same line.
+At minimum, set the Ravencoin Core RPC connection:
 
-Also check `CORE_RPC_HOST`. The monitor itself runs inside this Docker
-container, so `127.0.0.1` there means the container's own loopback, not
-the host machine - leave it as `127.0.0.1` **only** if Core also runs
-inside a container sharing that exact same network stack as the monitor
-(an advanced setup, not this default one). For the common case of Core
-running directly on the same physical machine outside Docker (e.g.
-installed as a regular service on the same Raspberry Pi), treat it the
-same as a different machine: put that machine's own LAN IP here instead
-(e.g. `192.168.1.50`, the same address you'll browse to in step 5). If
-Core genuinely runs on a different machine, likewise use its LAN IP or
-hostname.
+```ini
+CORE_RPC_HOST=YOUR_CORE_HOST
+CORE_RPC_PORT=8766
+CORE_RPC_USER=YOUR_RPC_USER
+CORE_RPC_PASSWORD=YOUR_RPC_PASSWORD
+```
 
-**4. Start it, and confirm it's actually up before moving on:**
+### What should `CORE_RPC_HOST` be?
+
+This is the part that causes the most installation mistakes.
+
+- If Core runs **in another Docker container on the same Docker network**, use that Compose service/container hostname.
+- If Core runs **directly on the Linux host**, the monitor container usually cannot use `127.0.0.1` to reach it. Use an address reachable from the container and configure Core's `rpcbind`/`rpcallowip` appropriately.
+- If Core runs **on another machine**, use that machine's LAN IP or hostname.
+
+Inside a Docker container, `127.0.0.1` means **that container itself**, not automatically the Raspberry Pi or server underneath it.
+
+### Core RPC example
+
+A simple `raven.conf` can contain something equivalent to:
+
+```ini
+server=1
+rpcuser=monitor_rpc
+rpcpassword=USE_A_LONG_RANDOM_PASSWORD
+```
+
+If RPC is reached from another container/address, configure `rpcbind` and `rpcallowip` narrowly for your network instead of exposing RPC to the internet.
+
+If you use Core's `rpcauth=` mechanism, use the original plaintext password associated with that generated credential; the hash stored in `raven.conf` is not itself the password the monitor sends.
+
+## 4. Protect the dashboard
+
+The monitor supports optional HTTP Basic authentication. It is **required for write-capable dashboard controls**.
+
+In `.env`:
+
+```ini
+MONITOR_USER=monitor
+MONITOR_PASSWORD=CHOOSE_YOUR_OWN_STRONG_PASSWORD
+```
+
+Do not commit your real `.env` file.
+
+If you browse using a DNS hostname instead of a private IP/localhost name, also add it to `MONITOR_ALLOWED_HOSTS`, for example:
+
+```ini
+MONITOR_ALLOWED_HOSTS=node.local
+```
+
+## 5. Start the monitor
 
 ```bash
 docker compose up -d --build
-docker compose ps
 ```
 
-The build takes a minute or two the first time (nothing after that - it's
-plain Python, no compile step). `docker compose ps` should show one
-container, state `Up` (or `Up (healthy)` after about 15 seconds once its
-built-in healthcheck has run once). If it instead shows `Restarting` or
-exits immediately, skip ahead to the troubleshooting note below before
-doing anything else - don't just retry the same command.
+Check it:
 
-**5. Open it:** point a browser on the same LAN at `http://<this-machine's-IP>:8899`.
-The container binds `127.0.0.1:8899` by default - it is meant to be reached
-over the LAN via your own reverse proxy, SSH tunnel, or a firewall rule you
-control. **It has no authentication of its own; do not expose it to the
-public internet.**
+```bash
+docker compose ps
+curl -s http://127.0.0.1:8899/healthz
+```
 
-Don't have a browser handy on that machine, or want a scriptable check
-first? `curl http://localhost:8899/healthz` returns `{"status": "ok"}`
-once the monitor itself is running (this only confirms the monitor is
-alive, not that it can reach Core - see the troubleshooting note below
-for that).
+A healthy monitor returns:
 
-**If the page loads but shows no data:** run `docker compose logs -f` and
-look for an RPC authentication error - it almost always means
-`CORE_RPC_USER`/`CORE_RPC_PASSWORD` don't match `raven.conf`, or
-`CORE_RPC_HOST` can't reach Core from inside the container. Also confirm
-Core's `raven.conf` has `server=1` and an `rpcallowip=` entry covering
-the monitor's address - this is needed any time `CORE_RPC_HOST` isn't
-`127.0.0.1`, which includes Core running on the very same machine as the
-monitor's Docker container (from Core's point of view, that container is
-an outside address, not "itself"). If Core still refuses the connection
-after adding `rpcallowip=`, also add `rpcbind=0.0.0.0` to `raven.conf`
-and restart Core, so it actually listens on more than just its own
-loopback address.
+```json
+{"status":"ok"}
+```
 
-## Configuration
+That proves the monitor process is alive. The dashboard itself will tell you whether Core/ElectrumX are reachable and synchronized.
 
-All configuration is via environment variables - see `.env.example` for the
-full list with defaults. Highlights:
+## 6. Open the dashboard
 
-| Variable | Purpose |
-|---|---|
-| `CORE_RPC_HOST` / `CORE_RPC_PORT` | Where to reach Ravencoin Core's JSON-RPC |
-| `CORE_RPC_USER` / `CORE_RPC_PASSWORD` | RPC credentials (or the `_FILE` variants below) |
-| `CORE_RPC_USER_FILE` / `CORE_RPC_PASSWORD_FILE` | Read credentials from a file instead (Docker secrets, mounted files) |
-| `ELECTRUMX_ENABLED` | `auto` (default, silent probe), `true`, or `false` |
-| `ELECTRUMX_RPC_HOST` / `_PORT` | ElectrumX's admin RPC (`rpc://`), default port 8000 |
-| `ELECTRUMX_SSL_HOST` / `_PORT` | ElectrumX's public `ssl://` port, used read-only for backend sync info |
-| `ELECTRUMX_SSL_SNI` | Only needed if the TLS certificate's SNI hostname (the hostname a TLS client announces before the server picks which certificate to present) differs from `ELECTRUMX_SSL_HOST` - rarely needed |
-| `PRICE_FEED_ENABLED` | Off by default; set `true` to poll Binance for RVN/USDT |
-| `EXTRA_DISK_PATHS` | `Label=/path,Label2=/path2` - report disk usage for extra mounted volumes beyond `/` |
-| `HISTORY_ENABLED` / `HISTORY_STORAGE` | History on by default, RAM-only (`memory`) by default - see "History storage" |
-| `PRIVACY_MODE` | Mask IPs server-side (`192.168.1.123` -> `192.168.x.x`) before they reach the browser |
-| `PROMETHEUS_ENABLED` | Expose `/metrics` in Prometheus text format (on by default) |
-| `MIN_SAFE_CORE_VERSION` | e.g. `4.8.0` - flag the running Core version against a minimum, offline, no effect if unset |
-| `ALERT_WEBHOOK_URL` | Generic webhook (unset by default) - see "Alerting" |
+The default Compose file binds the web service to:
 
-See `.env.example` for the full list, including health-threshold tuning
-(`DISK_WARNING_PERCENT`, `ELECTRUMX_CRITICAL_LAG`, `CHAIN_STALE_WARNING_SECONDS`,
-`HEALTH_MIN_PEERS`, `RPC_LATENCY_WARNING_MS`, ...) - every threshold has a
-sane default; none of this needs to be touched to get a working monitor.
+```text
+127.0.0.1:8899
+```
 
-Credentials can be supplied either as plain environment variables or as
-file paths (`*_FILE`), so you can mount Docker/Compose secrets instead of
-putting passwords in `.env`.
+That is intentionally conservative. Access it through a local browser, SSH tunnel, LAN-specific override, or your own authenticated reverse proxy/firewall setup.
 
-## Deployment modes
+**Do not expose the dashboard or, especially, Ravencoin RPC directly to the public internet.**
 
-### Standalone Ravencoin Core
+---
 
-The common case: point `CORE_RPC_HOST`/`CORE_RPC_PORT`/credentials at your
-node. `ELECTRUMX_ENABLED=auto` (the default) means the ElectrumX section
-just won't appear if nothing answers on the ElectrumX ports - no
-configuration needed to hide it.
+# Reading the dashboard
 
-### Core + ElectrumX bundle
+## Health score
 
-ElectrumX's admin RPC port (`rpc://`) is meant to be reachable from
-*localhost only* by default - that's what makes `electrumx_rpc getinfo`
-work without a password, so most ElectrumX deployments (including the
-official `docker-compose` examples) bind it to `127.0.0.1` inside the
-ElectrumX container itself. A sibling container on the same Docker network
-cannot reach it, even by container name - and if your ElectrumX stack is
-someone else's project (or already security-reviewed and you don't want
-to touch its config), that binding should stay exactly as it is.
+The large score at the top is calculated server-side from actual node state. It is not a decorative percentage.
 
-Three ways to get the connected-client list anyway, in order of
-preference:
+It considers chain freshness/sync, RPC reachability and latency, peers, storage state, mempool availability and ElectrumX lag when ElectrumX is enabled.
 
-**1. Host-side poller (recommended - no ElectrumX config changes, no
-Docker socket in the monitor container).** `contrib/electrumx-admin-poller.py`
-runs on the Docker host itself (which already has legitimate `docker exec`
-access to your own containers), polls the admin RPC via `docker exec`, and
-writes a small JSON snapshot to disk. The monitor container just reads
-that file read-only:
+`100 HEALTHY` therefore means the configured checks are currently passing; it does not mean the software makes a security guarantee about the entire Ravencoin network.
+
+## RVN / USDT
+
+Optional market information from a public Binance market-data endpoint. Enable it with:
+
+```ini
+PRICE_FEED_ENABLED=true
+```
+
+The node monitor does not need price data to function.
+
+## Sync
+
+Shows Core's validated block height, headers and verification progress.
+
+A freshly installed node may have many headers while validated blocks are still catching up. That is normal during initial blockchain synchronization.
+
+## P2P Network
+
+Shows Ravencoin network information from Core, including connected peers, protocol version, difficulty and network hashrate.
+
+## Mempool
+
+Shows transactions currently waiting in your Core mempool. This is **your node's mempool view**, not a guarantee that every node on the network has exactly the same list at that instant.
+
+## Host Resources / Storage
+
+Reads Linux host/container-visible resource information. Extra blockchain disks can be added with `EXTRA_DISK_PATHS` and mounted read-only into the monitor container.
+
+The default history configuration is RAM-only specifically to avoid continuous writes to microSD/SSD storage.
+
+---
+
+# Ravencoin Network Traffic
+
+The **Ravencoin Network Traffic** card is P2P-only traffic reported by Ravencoin Core's own:
+
+```text
+getnettotals
+```
+
+It shows:
+
+- current download rate;
+- current upload rate;
+- bytes received since Core started;
+- bytes sent since Core started;
+- total exchanged;
+- sampling window;
+- Core's native upload-target state, if configured.
+
+This excludes unrelated host traffic such as SSH, Docker updates and the dashboard itself.
+
+The `Current P2P upload` value shown in the Core bandwidth-control card uses the **same `getnettotals` sample**, so those two displayed values are intentionally aligned.
+
+---
+
+# Bandwidth Control
+
+Bandwidth Control is optional. It is implemented by a small root-owned helper on the Docker host using Linux `tc`.
+
+The dashboard container itself remains unprivileged: it does **not** receive the Docker socket and does **not** receive `CAP_NET_ADMIN`.
+
+## Units
+
+You can type a value manually and choose:
+
+```text
+B/s
+KB/s
+MB/s
+GB/s
+```
+
+`KB`, `MB` and `GB` use 1024-based units in this project.
+
+Examples:
+
+```text
+250 KB/s
+1.5 MB/s
+10 MB/s
+```
+
+A value of `0`, or the **Unlimited** button, means no monitor-imposed cap.
+
+### Core versus ElectrumX measurement
+
+For Ravencoin Core, the displayed current rate is Core P2P traffic from `getnettotals`.
+
+For ElectrumX, there is no equivalent application-level `getnettotals` counter, so its current public egress is measured by Linux `tc`.
+
+The actual limit for both services is enforced at network level by `tc`.
+
+Private Docker/LAN destinations are exempted by the controller so normal Core ↔ ElectrumX local traffic is not intentionally throttled.
+
+Full technical documentation: [`BANDWIDTH_CONTROL.md`](BANDWIDTH_CONTROL.md).
+
+---
+
+# Connection Limits
+
+The dashboard separates two completely different concepts.
+
+## Ravencoin Core · P2P peers
+
+These are other **Ravencoin nodes** directly connected to your Core node.
+
+The native setting is:
+
+```text
+-maxconnections=N
+```
+
+When no explicit override is present, Ravencoin Core's native default is **125 peers**.
+
+## ElectrumX · client sessions
+
+These are **wallets/Electrum-protocol clients** connected to your ElectrumX server. They are not Ravencoin P2P peers.
+
+The native setting is:
+
+```text
+MAX_SESSIONS=N
+```
+
+ElectrumX's native default is **1000 sessions**, subject to ElectrumX's own file-descriptor safety logic.
+
+## What the fields mean
+
+`Connected now` is how many connections exist right now.
+
+`Current limit` is the current configured/native maximum shown by the monitor.
+
+`New limit` is what you want to apply.
+
+**Entering `0` does not mean zero connections.** It removes the monitor's override and returns the selected service to its deployment/native configuration.
+
+Changing a connection limit requires restarting/recreating **only the selected service**, because Core and ElectrumX read these native settings at process startup. The dashboard asks for confirmation before doing it.
+
+Full technical documentation: [`CONNECTION_CONTROL.md`](CONNECTION_CONTROL.md).
+
+---
+
+# Installing the optional host controller
+
+You only need this section if you want Bandwidth Control and Connection Limits to be writable from the dashboard.
+
+## 1. Install host prerequisites
+
+Debian/Ubuntu/Raspberry Pi OS:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3 iproute2 util-linux
+```
+
+## 2. Install the controller service
+
+Example when this repository lives at `/opt/ravencoin-node-monitor`:
+
+```bash
+cd /opt/ravencoin-node-monitor
+sudo cp contrib/ravencoin-bandwidth-controller.service.example \
+  /etc/systemd/system/ravencoin-bandwidth-controller.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now ravencoin-bandwidth-controller.service
+sudo systemctl status --no-pager ravencoin-bandwidth-controller.service
+```
+
+The example unit contains default Core/ElectrumX container names. If your deployment uses different names, edit the corresponding `Environment=` values in the systemd unit.
+
+The controller persists its state under:
+
+```text
+/var/lib/ravencoin-bandwidth/
+```
+
+and exposes a restricted Unix socket under:
+
+```text
+/run/ravencoin-bandwidth/control.sock
+```
+
+## 3. Enable the dashboard side
+
+In `.env`:
+
+```ini
+MONITOR_USER=monitor
+MONITOR_PASSWORD=YOUR_STRONG_PASSWORD
+BANDWIDTH_CONTROL_ENABLED=true
+BANDWIDTH_CONTROL_SOCKET=/run/ravencoin-bandwidth/control.sock
+```
+
+Then include the optional Compose overlay:
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.override.yml \
+  -f docker-compose.bandwidth.yml \
+  up -d --build --no-deps monitor
+```
+
+If you want that overlay selected automatically, Compose supports setting `COMPOSE_FILE` in your local `.env`, for example:
+
+```ini
+COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.bandwidth.yml
+```
+
+Do not copy a sample override blindly over an existing local override. Preserve your own volumes, networks, LAN binding, secrets and user/group settings.
+
+## 4. Verify the socket is visible
+
+Host:
+
+```bash
+sudo ls -l /run/ravencoin-bandwidth/control.sock
+```
+
+Monitor container:
+
+```bash
+docker exec ravencoin-node-monitor \
+  ls -l /run/ravencoin-bandwidth/control.sock
+```
+
+If the host socket exists but the container path is empty after the controller service was recreated, recreate only the monitor container so the bind mount attaches to the current runtime directory:
+
+```bash
+docker compose up -d --no-deps --force-recreate monitor
+```
+
+Do not restart Core or ElectrumX just to refresh this socket mount.
+
+---
+
+# ElectrumX integration
+
+Set:
+
+```ini
+ELECTRUMX_ENABLED=auto
+```
+
+for the easiest setup. The monitor probes ElectrumX and hides ElectrumX-specific cards when it is not available.
+
+Useful settings include:
+
+```ini
+ELECTRUMX_RPC_HOST=127.0.0.1
+ELECTRUMX_RPC_PORT=8000
+ELECTRUMX_SSL_HOST=127.0.0.1
+ELECTRUMX_SSL_PORT=50002
+```
+
+Many ElectrumX deployments intentionally bind the admin RPC only to loopback inside their own container. In that case, the recommended integration is the included host-side poller:
 
 ```bash
 python3 contrib/electrumx-admin-poller.py \
-  --container <your-electrumx-container-name> \
+  --container YOUR_ELECTRUMX_CONTAINER \
   --output /var/lib/ravencoin-node-monitor/electrumx-admin.json
 ```
 
-(see `contrib/electrumx-admin-poller.service.example` for a systemd unit),
-then in `.env`:
+Then configure:
 
-```
+```ini
 ELECTRUMX_ADMIN_SOURCE=file
 ELECTRUMX_ADMIN_FILE=/data/electrumx-admin.json
 ```
 
-and bind-mount the snapshot file read-only into the monitor container at
-that path.
+and mount that snapshot read-only into the monitor.
 
-**2. Shared network namespace.** If you're fine editing your own compose
-file, run the monitor with `network_mode: "container:<electrumx-container-name>"`
-(see `docker-compose.electrumx.example.yml`) - `127.0.0.1:8000` inside the
-monitor then reaches ElectrumX's admin RPC directly. Note this also means
-the monitor's own HTTP port can only be published by adding it to the
-ElectrumX service's own `ports:` list, since a container sharing another
-container's network namespace can't publish ports independently.
+This avoids putting the Docker socket into the dashboard container and avoids unnecessarily opening ElectrumX's admin RPC to the LAN.
 
-**3. Loosen the bind on purpose.** If you control the ElectrumX deployment
-and are fine with it, changing `rpc://127.0.0.1:8000` to `rpc://0.0.0.0:8000`
-in its `SERVICES` setting lets any sibling container on the same Docker
-network reach it directly via `ELECTRUMX_RPC_HOST=<service-name>` - the
-port still isn't published to the LAN unless you also add it to `ports:`.
+---
 
-If your ElectrumX deployment already binds its admin RPC to a routable
-address, none of this is needed - just point `ELECTRUMX_RPC_HOST` at the
-container/service name directly.
+# History: RAM by default
 
-## Mempool transaction classification
+The default is deliberately:
 
-Each mempool transaction is looked up via `getrawtransaction` (batched into
-a single JSON-RPC call) and marked `RVN` or `ASSET: <name>` based on
-whether any output carries an asset transfer. This only sees transactions
-currently in Core's own mempool - it is not a general asset explorer, and
-it does not require `txindex=1` (Core's optional, disk-heavy full
-historical-transaction index).
-
-## Transaction and block detail
-
-`GET /api/tx/<txid>` fetches full detail for one transaction on demand
-(size, version, locktime, inputs, and every output's address/type/amount)
-- it is not part of the periodic `/api/status` snapshot, so a large mempool
-doesn't bloat every poll cycle. The UI calls it when you click a mempool
-transaction row. Input amounts aren't resolved (that would need one extra
-RPC call per input to look up the spent output), only what's directly on
-the raw transaction is shown.
-
-`GET /api/block/<hash>` fetches one block's header fields and its list of
-TXIDs - the UI calls it when you click a row in the Recent Blocks card.
-Clicking a TXID inside that list then calls `/api/tx/<txid>?blockhash=<hash>`,
-which passes the blockhash straight to `getrawtransaction`. Whether that
-actually resolves a confirmed, already-spent transaction depends on your
-node: newer Core RPC versions accept the blockhash hint directly; if yours
-doesn't (this call silently falls back to a plain 2-argument call), or your
-node doesn't run `-txindex=1`, a spent confirmed transaction will 404. This
-is a real limitation of the node's RPC surface, not something the monitor
-works around - unspent and mempool transactions always resolve fine either
-way.
-
-## Node Health
-
-`/api/health` (and the panel at the top of the dashboard) exposes a
-deterministic 0-100 score plus a `healthy` / `warning` / `critical` /
-`unknown` status, computed server-side from fixed, documented rules - not
-an arbitrary UI-only calculation:
-
-| Component | Warning | Critical |
-|---|---|---|
-| Chain | tip stale > `CHAIN_STALE_WARNING_SECONDS`, or headers running ahead of validated blocks | tip stale > `CHAIN_STALE_CRITICAL_SECONDS` |
-| Core RPC | average latency > `RPC_LATENCY_WARNING_MS` | Core unreachable (score forced to 0) |
-| Peers | fewer than `HEALTH_MIN_PEERS` | zero peers |
-| Disk | usage > `DISK_WARNING_PERCENT` (worst of root + any extra disk) | usage > `DISK_CRITICAL_PERCENT` |
-| ElectrumX | lag >= `ELECTRUMX_WARNING_LAG` blocks, or unreachable while `ELECTRUMX_ENABLED=true` | lag >= `ELECTRUMX_CRITICAL_LAG` blocks |
-| Mempool | data partially unavailable | - (informational only) |
-
-The chain's "tip" is the most recent block your node has fully accepted.
-Core first downloads lightweight block headers, then validates the full
-blocks behind them; headers running ahead of validated blocks is normal
-during the initial sync right after installing Core, but afterwards it
-signals validation is falling behind.
-
-A reorg is reported as a transient warning on the chain component and as
-a `reorg_detected` event, never silently absorbed into the score. Core's
-`-28 RPC_IN_WARMUP` state (loading the block index right after a restart)
-is reported as `unknown`, not `critical` - it isn't a fault.
-
-## Event system
-
-Events fire only on state *transitions* (Core going down, then recovering;
-disk crossing into warning, then back out; a reorg; a new block) - never
-once per poll cycle, so a persistently unhealthy condition doesn't spam
-the timeline. `GET /api/events?severity=warning&limit=100` (severity is
-optional, `info`/`warning`/`critical`; results are newest-first, capped at
-500 regardless of the requested limit).
-
-## History storage
-
-**History is RAM-only by default and does not survive a restart - this is
-intentional.** The typical deployment target for this project is a
-Raspberry Pi or similar SBC running off a microSD card, eMMC, or a small
-SSD; writing a time-series sample to flash every poll cycle, forever,
-is exactly the kind of write amplification that shortens the life of that
-storage. Under the default configuration this project makes **zero**
-periodic writes to persistent storage:
-
-- History lives in SQLite's `:memory:` mode (`HISTORY_STORAGE=memory`) -
-  genuine SQL range/bucketing queries power the charts and disk-runway
-  estimate, but the data only ever exists in the process's own RAM.
-- The event timeline is a bounded in-memory list (`EVENT_HISTORY_MAX`,
-  default 2000 events).
-- Two independent bounds keep memory predictable regardless of uptime: a
-  retention window (`HISTORY_RETENTION_HOURS`, default 168 = 7 days) and a
-  hard per-metric row cap (`HISTORY_MAX_SAMPLES`, default 20160) that
-  applies even if the retention sweep ever falls behind.
-- History samples are decoupled from the poll interval
-  (`HISTORY_SAMPLE_INTERVAL`, default 60s) - the dashboard itself can keep
-  polling Core every few seconds without that cadence also controlling how
-  fast history grows.
-
-At the defaults (17 tracked metrics, 60s sampling, 7-day retention) this
-is roughly 1,000 rows/hour, ~170,000 rows at steady state, on the order of
-**15-20MB of RAM** including the event log - genuinely lightweight.
-
-Restarting the monitor (or its container, or the host) resets history to
-empty; the dashboard handles this gracefully ("Collecting historical
-data..." until enough samples exist) rather than erroring.
-
-If you specifically want history to survive restarts and accept the write
-wear, opt in explicitly:
-
+```ini
+HISTORY_STORAGE=memory
 ```
+
+Historical samples live in SQLite `:memory:` and disappear when the monitor restarts.
+
+Why? Because a common target for this project is a Raspberry Pi or similar SBC. Continuously writing time-series data to a microSD card or small SSD forever is unnecessary wear.
+
+History sampling is separate from the live dashboard refresh rate. The default monitor can therefore refresh frequently without writing every refresh to disk.
+
+If you explicitly want persistent local history:
+
+```ini
 HISTORY_STORAGE=sqlite
 HISTORY_DB_PATH=/data/history.db
 ```
 
-This never happens silently in either direction - `memory` never falls
-back to writing a file, and `sqlite` never silently reverts to memory-only
-if its path is misconfigured (it fails to start instead). If you want
-long-term history without local writes at all, use the `/metrics`
-endpoint with an external Prometheus-compatible collector instead of
-asking this process to accumulate months of samples on its own.
+and mount a writable `/data` volume.
 
-## Alerting
+For long-term monitoring without local flash writes, use the `/metrics` endpoint with an external Prometheus-compatible collector.
 
-Set `ALERT_WEBHOOK_URL` to receive a POST on every event whose severity is
-at or above `ALERT_MIN_SEVERITY` (default `warning`), with at least
-`ALERT_COOLDOWN_SECONDS` (default 900) between repeats of the same event
-type - a flapping condition can't spam the endpoint. Delivery runs off the
-poll loop's thread and never affects monitoring even if the webhook is
-slow, unreachable, or misconfigured; failures are never logged (the URL
-itself may carry a secret token). Payload:
+---
 
-```json
-{"service": "ravencoin-node-monitor", "severity": "critical",
- "event": "core_unreachable", "message": "...", "timestamp": "..."}
+# Privacy
+
+Set:
+
+```ini
+PRIVACY_MODE=true
 ```
 
-## Operational endpoints
+and peer/client IP addresses are masked **server-side before being sent to the browser**.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /healthz` | Process liveness - is the poll loop thread running |
-| `GET /readyz` | Is Core reachable and past warmup (suitable for a Docker `HEALTHCHECK` or an orchestrator readiness probe) |
-| `GET /metrics` | Prometheus text exposition format (disable with `PROMETHEUS_ENABLED=false`); no peer IPs or other identifying strings are ever put in a label |
-| `GET /api/health` | The Node Health object described above |
-| `GET /api/events` | Recent events, `?severity=` and `?limit=` (capped at 500) |
-| `GET /api/history` | `?metric=<name>&range=1h\|6h\|24h\|7d\|30d` - `metric` is checked against a fixed whitelist, never arbitrary |
-| `GET /api/diagnostics` | Sanitized bug-report bundle - see below |
+Examples:
 
-## Diagnostics export
-
-`GET /api/diagnostics` returns a JSON bundle suitable for attaching to a
-bug report: app/Core version, chain and health state, a config summary,
-peer aggregates, storage/resource status, ElectrumX status, and the last
-50 events. It is built from an explicit field whitelist, not by dumping
-config or internal state, specifically so a future config field can never
-leak into it by accident. It never includes RPC credentials, the alert
-webhook URL (only whether one is configured), or, when `PRIVACY_MODE` is
-on, unmasked IPs.
-
-## Privacy mode
-
-`PRIVACY_MODE=true` masks IPv4 (`192.168.1.123` -> `192.168.x.x`) and IPv6
-(`2001:db8::1` -> `2001:db8:x:x:x:x`) addresses in peer lists, banned-peer
-entries, and ElectrumX client sessions. Masking happens **server-side**,
-before the snapshot is ever serialized to JSON - a raw address is never
-sent to the browser in the first place, so there's nothing for the
-frontend to accidentally leak. `.onion` addresses are left as-is (they
-aren't real, geolocatable IPs to begin with).
-
-## Updating a running deployment
-
-If you're running via `docker compose` and only copy new source files into
-the container's filesystem (`docker cp`) without rebuilding the image, the
-change is temporary: the next time the container is recreated for *any*
-reason - a reboot, `docker compose up -d` after touching `.env` or a
-compose file, a Docker upgrade - Compose recreates it from the last-built
-**image**, silently reverting to the old code. Always rebuild before
-recreating:
-
-```bash
-docker compose build
-docker compose up -d
+```text
+192.168.1.123  ->  192.168.x.x
 ```
 
-The source tree on disk is the source of truth; the image should always be
-rebuilt from it, never hand-patched and left that way.
+The screenshots committed to this README have also been manually redacted where peer addresses were visible.
 
-## Running without Docker
+Do not confuse `PRIVACY_MODE` with access control: masking addresses does not make a public dashboard safe to expose.
 
-Configuration comes only from real environment variables - there's no
-built-in `.env` file parser; when running via `docker compose`, Compose's
-own `env_file:` setting is what loads `.env` for you. Running the server
-directly means you have to load it into the shell yourself first. From
-the repository root, with a `.env` file already created (see Quick start
-step 3):
+---
+
+# Security model
+
+The default container is intentionally restricted:
+
+- read-only root filesystem;
+- `cap_drop: ALL`;
+- `no-new-privileges`;
+- no Docker socket;
+- no `CAP_NET_ADMIN`;
+- optional Basic authentication;
+- Host-header validation to reduce DNS-rebinding exposure;
+- security headers and nonce-based CSP;
+- RPC credentials can come from mounted files/Docker secrets instead of plain environment values;
+- diagnostics are built from an explicit safe-field whitelist;
+- remote/FQDN ElectrumX TLS targets require proper certificate verification;
+- write actions require authentication and a same-origin control header.
+
+The optional host controller is intentionally separate because Docker service recreation and Linux traffic shaping require host privileges. The web dashboard itself is not granted those privileges.
+
+`/healthz` and `/readyz` intentionally remain available for health probes even when dashboard authentication is enabled.
+
+---
+
+# Useful endpoints
+
+```text
+GET /healthz
+GET /readyz
+GET /metrics
+GET /api/status
+GET /api/health
+GET /api/events
+GET /api/history
+GET /api/diagnostics
+GET /api/bandwidth
+GET /api/connections
+```
+
+`/api/diagnostics` is specifically designed for bug reports and excludes RPC passwords, webhook URLs and other secrets.
+
+---
+
+# Configuration reference
+
+The complete, authoritative list of environment variables is in [`.env.example`](.env.example).
+
+The settings most people actually need are:
+
+```ini
+# Identity / web
+NODE_NAME=My Ravencoin Node
+BIND_PORT=8899
+MONITOR_USER=monitor
+MONITOR_PASSWORD=YOUR_PASSWORD
+
+# Core RPC
+CORE_RPC_HOST=YOUR_CORE_HOST
+CORE_RPC_PORT=8766
+CORE_RPC_USER=YOUR_RPC_USER
+CORE_RPC_PASSWORD=YOUR_RPC_PASSWORD
+
+# ElectrumX
+ELECTRUMX_ENABLED=auto
+
+# Optional market price
+PRICE_FEED_ENABLED=false
+
+# RAM history
+HISTORY_ENABLED=true
+HISTORY_STORAGE=memory
+
+# Privacy
+PRIVACY_MODE=false
+
+# Prometheus
+PROMETHEUS_ENABLED=true
+
+# Optional write controls
+BANDWIDTH_CONTROL_ENABLED=false
+```
+
+RPC credentials can also be read from files using the corresponding `_FILE` variables, which is preferable when your Compose deployment already uses Docker secrets.
+
+---
+
+# Updating an existing installation
+
+Do not patch files inside the running container and leave them there. A future container recreation would silently restore the old image.
+
+Update the source tree, rebuild the image, then recreate only the monitor:
 
 ```bash
-set -a
-source .env
-set +a
+cd /path/to/ravencoin-node-monitor
+git pull --ff-only origin main
+docker compose build monitor
+docker compose up -d --no-deps --force-recreate monitor
+```
+
+Then verify:
+
+```bash
+curl -s http://127.0.0.1:8899/healthz
+```
+
+If you use a local `docker-compose.override.yml`, keep it local and preserve it during updates.
+
+---
+
+# Troubleshooting
+
+## The page opens but Core data is missing
+
+Check:
+
+```bash
+docker compose logs --tail=100 monitor
+```
+
+Then verify:
+
+- RPC user/password are correct;
+- `CORE_RPC_HOST` is reachable **from the monitor container**;
+- Core has `server=1`;
+- `rpcbind`/`rpcallowip` allow the monitor's address/network;
+- you did not accidentally use container `127.0.0.1` to mean the Docker host.
+
+## Health endpoint works but the dashboard asks for a password
+
+That is expected when `MONITOR_PASSWORD` is configured. `/healthz` and `/readyz` remain unauthenticated health probes.
+
+## Bandwidth/connection cards say `host controller unavailable`
+
+Check the service:
+
+```bash
+sudo systemctl status --no-pager ravencoin-bandwidth-controller.service
+```
+
+Check the host socket:
+
+```bash
+sudo ls -l /run/ravencoin-bandwidth/control.sock
+```
+
+Check the same socket inside the monitor:
+
+```bash
+docker exec ravencoin-node-monitor \
+  ls -l /run/ravencoin-bandwidth/control.sock
+```
+
+## The UI still looks like an older version after an update
+
+Rebuild/recreate the monitor and do a hard reload in the browser. Static JavaScript used by the dynamic cards is versioned/no-cache where required, but a stale container image can still serve old code if you updated Git without rebuilding.
+
+## Connection limit shows 125 / 1000 and I want to know why
+
+Those are the native defaults shown when the monitor is not applying an explicit override:
+
+- Ravencoin Core: 125 peers;
+- ElectrumX: 1000 client sessions, subject to ElectrumX's own file-descriptor safety behavior.
+
+A value of `0` in **New limit** means "remove monitor override", not "allow zero connections".
+
+---
+
+# Running without Docker
+
+The application itself uses Python's standard library and can run directly.
+
+Load your environment variables, then:
+
+```bash
 cd app
 python3 server.py
 ```
 
-No dependencies beyond Python 3.9+.
+Docker is still the documented/recommended deployment because the Compose files provide the expected hardening and repeatability.
 
-## Docker hardening
+---
 
-The default `docker-compose.yml` runs the container with `read_only: true`,
-`cap_drop: [ALL]`, and `no-new-privileges` - genuine hardening rather than
-cosmetic, made possible by history being RAM-only by default (nothing on
-disk needs to be writable under normal operation). If you opt into
-`HISTORY_STORAGE=sqlite`, mount a volume at `/data` (see the commented
-example in `docker-compose.yml`) - the rest of the container stays
-read-only.
+# Development and tests
 
-## Development
+Run the test suite:
 
 ```bash
 python3 -m unittest discover -t . -s tests -p "test_*.py"
 ```
 
-Tests run against a programmable fake Ravencoin Core JSON-RPC responder
-(`tests/fake_rpc.py`) - no live node is required, and none of the tests
-make real network calls. CI (`.github/workflows/ci.yml`) runs this suite
-plus `ruff` and a Docker build/smoke test on every push.
+CI also validates Python, dashboard JavaScript, the Docker image/smoke test and the public demo configuration.
 
-## License
+---
 
-MIT - see `LICENSE`.
+# Related documentation
 
-`app/static/raven-icon.png` is the raven icon from the official
-[RavenProject/Ravencoin](https://github.com/RavenProject/Ravencoin/tree/master/share/pixmaps)
-repository, covered by that project's own MIT license.
+- [`BANDWIDTH_CONTROL.md`](BANDWIDTH_CONTROL.md) — host-side upload shaping and security model
+- [`CONNECTION_CONTROL.md`](CONNECTION_CONTROL.md) — Core peer and ElectrumX client-session limits
+- [`DEMO.md`](DEMO.md) — public Vercel demo boundary
+- [`SECURITY.md`](SECURITY.md) — security policy
+- [`.env.example`](.env.example) — complete environment-variable reference
+
+---
+
+# License
+
+MIT — see [`LICENSE`](LICENSE).
+
+The Ravencoin icon used by the dashboard comes from the official RavenProject/Ravencoin repository and is covered by that project's MIT license.
